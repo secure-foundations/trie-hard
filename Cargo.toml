@@ -15,7 +15,7 @@ builtin = { git = "https://github.com/verus-lang/verus", branch = "main" }
 builtin_macros = { git = "https://github.com/verus-lang/verus", branch = "main" }
 vstd = { git = "https://github.com/verus-lang/verus", branch = "main" }
 
-[dev-dependencies]
+# Should be in [dev-dependencies]
 criterion = "0.5.1"
 divan = "0.1.14"
 once_cell = "1.19.0"
