@@ -456,7 +456,7 @@ impl SearchNode<u8> {
 impl<I> SearchNode<I> {
     /// Get the spec children nodes represented by a SearchNode
     /// TODO: verify
-    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<(u8, int)>;
+    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<SpecChildRef>;
 }
 
 impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
