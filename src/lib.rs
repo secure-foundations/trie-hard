@@ -410,6 +410,385 @@ where
     }
 }
 
+//////////////////////////////////////////////////////////////////////////////////////
+/// Manual expansion of the `trie_impls!` macro for type u32 
+
+impl SearchNode<u32> {
+    fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u32>) -> Option<usize> {
+        let c_mask = trie.masks.0[c as usize];
+        let mask_res = self.mask & c_mask;
+        (mask_res > 0).then(|| {
+            let smaller_bits = mask_res - 1;
+            let smaller_bits_mask = smaller_bits & self.mask;
+            let index_offset = smaller_bits_mask.count_ones() as usize;
+            self.edge_start + index_offset
+        })
+    }
+}
+
+impl<'a, T> TrieHardSized<'a, T, u32>
+where
+    T: Copy
+{
+
+    /// Get the value stored for the given key. Any key type can be used
+    /// here as long as the type implements `AsRef<[u8]>`. The byte slice
+    /// referenced will serve as the actual key.
+    /// ```
+    /// # use trie_hard::TrieHard;
+    /// let trie = ["and", "ant", "dad", "do", "dot"]
+    ///     .into_iter()
+    ///     .collect::<TrieHard<'_, _>>();
+    ///
+    /// let TrieHard::U8(sized_trie) = trie else {
+    ///     unreachable!()
+    /// };
+    ///
+    /// assert!(sized_trie.get("dad".to_owned()).is_some());
+    /// assert!(sized_trie.get(b"do").is_some());
+    /// assert!(sized_trie.get(b"don't".to_vec()).is_none());
+    /// ```
+    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Option<T> {
+        self.get_from_bytes(key.as_ref())
+    }
+
+    /// Get the value stored for the given byte-slice key.
+    /// ```
+    /// # use trie_hard::TrieHard;
+    /// let trie = ["and", "ant", "dad", "do", "dot"]
+    ///     .into_iter()
+    ///     .collect::<TrieHard<'_, _>>();
+    ///
+    /// let TrieHard::U8(sized_trie) = trie else {
+    ///     unreachable!()
+    /// };
+    ///
+    /// assert!(sized_trie.get_from_bytes(b"dad").is_some());
+    /// assert!(sized_trie.get_from_bytes(b"do").is_some());
+    /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
+    /// ```
+    pub fn get_from_bytes(&self, key: &[u8]) -> Option<T> {
+        let mut state = self.nodes.get(0)?;
+
+        for (i, c) in key.iter().enumerate() {
+
+            let next_state_opt = match state {
+                TrieState::Leaf(k, value) => {
+                    return (
+                        k.len() == key.len()
+                        && k[i..] == key[i..]
+                    ).then_some(*value)
+                }
+                TrieState::Search(search)
+                | TrieState::SearchOrLeaf(_, _, search) => {
+                    search.evaluate(*c, self)
+                }
+            };
+
+            if let Some(next_state_index) = next_state_opt {
+                state = &self.nodes[next_state_index];
+            } else {
+                return None;
+            }
+        }
+
+        if let TrieState::Leaf(k, value)
+            | TrieState::SearchOrLeaf(k, value, _) = state
+        {
+            (k.len() == key.len()).then_some(*value)
+        } else {
+            None
+        }
+    }
+
+    /// Create an iterator over the entire trie. Emitted items will be
+    /// ordered by their keys
+    ///
+    /// ```
+    /// # use trie_hard::TrieHard;
+    /// let trie = ["dad", "ant", "and", "dot", "do"]
+    ///     .into_iter()
+    ///     .collect::<TrieHard<'_, _>>();
+    ///
+    /// let TrieHard::U8(sized_trie) = trie else {
+    ///     unreachable!()
+    /// };
+    ///
+    /// assert_eq!(
+    ///     sized_trie.iter().map(|(_, v)| v).collect::<Vec<_>>(),
+    ///     ["and", "ant", "dad", "do", "dot"]
+    /// );
+    /// ```
+    pub fn iter(&self) -> TrieIterSized<'_, 'a, T, u32> {
+        TrieIterSized {
+            stack: vec![TrieNodeIter::default()],
+            trie: self
+        }
+    }
+
+
+    /// Create an iterator over the portion of the trie starting with the given
+    /// prefix
+    ///
+    /// ```
+    /// # use trie_hard::TrieHard;
+    /// let trie = ["dad", "ant", "and", "dot", "do"]
+    ///     .into_iter()
+    ///     .collect::<TrieHard<'_, _>>();
+    ///
+    /// let TrieHard::U8(sized_trie) = trie else {
+    ///     unreachable!()
+    /// };
+    ///
+    /// assert_eq!(
+    ///     sized_trie.prefix_search("d").map(|(_, v)| v).collect::<Vec<_>>(),
+    ///     ["dad", "do", "dot"]
+    /// );
+    /// ```
+    pub fn prefix_search<K: AsRef<[u8]>>(&self, prefix: K) -> TrieIterSized<'_, 'a, T, u32> {
+        let key = prefix.as_ref();
+        let mut node_index = 0;
+        let Some(mut state) = self.nodes.get(node_index) else {
+            return TrieIterSized::empty(self);
+        };
+
+        for (i, c) in key.iter().enumerate() {
+            let next_state_opt = match state {
+                TrieState::Leaf(k, _) => {
+                    if k.len() == key.len() && k[i..] == key[i..] {
+                        return TrieIterSized::new(self, node_index);
+                    } else {
+                        return TrieIterSized::empty(self);
+                    }
+                }
+                TrieState::Search(search)
+                | TrieState::SearchOrLeaf(_, _, search) => {
+                    search.evaluate(*c, self)
+                }
+            };
+
+            if let Some(next_state_index) = next_state_opt {
+                node_index = next_state_index;
+                state = &self.nodes[next_state_index];
+            } else {
+                return TrieIterSized::empty(self);
+            }
+        }
+
+        TrieIterSized::new(self, node_index)
+    }
+}
+
+impl<'a, T> TrieHardSized<'a, T, u32> where T: 'a + Copy {
+    fn new(masks: MasksByByteSized<u32>, values: Vec<(&'a [u8], T)>) -> Self {
+        let values = values.into_iter().collect::<Vec<_>>();
+        let sorted = values
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect::<BTreeMap<_, _>>();
+
+        let mut nodes = Vec::new();
+        let mut next_index = 1;
+
+        let root_state_spec = StateSpec {
+            prefix: &[],
+            index: 0,
+        };
+
+        let mut spec_queue = VecDeque::new();
+        spec_queue.push_back(root_state_spec);
+
+        while let Some(spec) = spec_queue.pop_front() {
+            debug_assert_eq!(spec.index, nodes.len());
+            let (state, next_specs) = TrieState::<'_, _, u32>::new(
+                spec,
+                next_index,
+                &masks.0,
+                &sorted,
+            );
+
+            next_index += next_specs.len();
+            spec_queue.extend(next_specs);
+            nodes.push(state);
+        }
+
+        TrieHardSized {
+            nodes,
+            masks,
+        }
+    }
+}
+
+
+impl <'a, T> TrieState<'a, T, u32> where T: 'a + Copy {
+    fn new(
+        spec: StateSpec<'a>,
+        edge_start: usize,
+        byte_masks: &[u32; 256],
+        sorted: &BTreeMap<&'a [u8], T>,
+    ) -> (Self, Vec<StateSpec<'a>>) {
+        let StateSpec { prefix, .. } = spec;
+
+        let prefix_len = prefix.len();
+        let next_prefix_len = prefix_len + 1;
+
+        let mut prefix_match = None;
+        let mut children_seen = 0;
+        let mut last_seen = None;
+
+        let next_states_paired = sorted
+            .range(RangeFrom { start: prefix })
+            .take_while(|(key, _)| key.starts_with(prefix))
+            .filter_map(|(key, val)| {
+                children_seen += 1;
+                last_seen = Some((key, *val));
+
+                if *key == prefix {
+                    prefix_match = Some((key, *val));
+                    None
+                } else {
+                    // Safety: The byte at prefix_len must exist otherwise we
+                    // would have ended up in the other branch of this statement
+                    let next_c = key.get(prefix_len).unwrap();
+                    let next_prefix = &key[..next_prefix_len];
+
+                    Some((
+                        *next_c,
+                        StateSpec {
+                            prefix: next_prefix,
+                            index: 0,
+                        },
+                    ))
+                }
+            })
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        // Safety: last_seen will be present because we saw at least one
+        //         entry must be present for this function to be called
+        let (last_k, last_v) = last_seen.unwrap();
+
+        if children_seen == 1 {
+            return (TrieState::Leaf(last_k, last_v), vec![]);
+        }
+
+        // No next_states means we hit a leaf node
+        if next_states_paired.is_empty() {
+            return (TrieState::Leaf(last_k, last_v), vec![], );
+        }
+
+        let mut mask = Default::default();
+
+        // Update the index for the next state now that we have ordered by
+        let next_state_specs = next_states_paired
+            .into_iter()
+            .enumerate()
+            .map(|(i, (c, mut next_state))| {
+                let next_node = edge_start + i;
+                next_state.index = next_node;
+                mask |= byte_masks[c as usize];
+                next_state
+            })
+            .collect();
+
+        let search_node = SearchNode { mask, edge_start };
+        let state = match prefix_match {
+            Some((key, value)) => {
+                TrieState::SearchOrLeaf(key, value, search_node)
+            }
+            _ => TrieState::Search(search_node),
+        };
+
+        (state, next_state_specs)
+    }
+}
+
+impl MasksByByteSized<u32> {
+    fn new(used_bytes: BTreeSet<u8>) -> Self {
+        let mut mask = Default::default();
+        mask += 1;
+
+        let mut byte_masks = [Default::default(); 256];
+
+        for c in used_bytes.into_iter() {
+            byte_masks[c as usize] = mask;
+            mask <<= 1;
+
+        }
+
+        Self(byte_masks)
+    }
+}
+
+impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, u32>
+where
+    T: Copy
+{
+    type Item = (&'a [u8], T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        use TrieState as T;
+        use TrieNodeIterStage as S;
+
+        while let Some((node, node_index, stage)) = self.stack.pop()
+            .and_then(|TrieNodeIter { node_index, stage }| {
+                self.trie.nodes.get(node_index).map(|node| (node, node_index, stage))
+            })
+        {
+            match (node, stage) {
+                (T::Leaf(key, value), S::Inner) => return Some((*key, *value)),
+                (T::SearchOrLeaf(key, value, search), S::Inner) => {
+                    self.stack.push(TrieNodeIter {
+                        node_index,
+                        stage: TrieNodeIterStage::Child(0, search.mask.count_ones() as usize)
+                    });
+                    self.stack.push(TrieNodeIter {
+                        node_index: search.edge_start,
+                        stage: Default::default()
+                    });
+                    return Some((*key, *value));
+                }
+                (T::Search(search), S::Inner) => {
+                    self.stack.push(TrieNodeIter {
+                        node_index,
+                        stage: TrieNodeIterStage::Child(0, search.mask.count_ones() as usize)
+                    });
+                    self.stack.push(TrieNodeIter {
+                        node_index: search.edge_start,
+                        stage: Default::default()
+                    });
+                }
+                (
+                    T::SearchOrLeaf(_, _, search) | T::Search(search),
+                    S::Child(mut child, child_count)
+                ) => {
+                    child += 1;
+                    if child < child_count {
+                        self.stack.push(TrieNodeIter {
+                            node_index,
+                            stage: TrieNodeIterStage::Child(child, child_count)
+                        });
+                        self.stack.push(TrieNodeIter {
+                            node_index: search.edge_start + child,
+                            stage: Default::default()
+                        });
+                    }
+                }
+                _ => unreachable!()
+            }
+        }
+
+        None
+    }
+}
+
+
+
+
+
+
 macro_rules! trie_impls {
     ($($int_type:ty),+) => {
         $(
@@ -792,7 +1171,8 @@ macro_rules! trie_impls {
     }
 }
 
-trie_impls! {u8, u16, u32, u64, u128, U256}
+// impl for u32 manually macro-expanded above
+trie_impls! {u8, u16, /* u32, */ u64, u128, U256}
 
 #[cfg(test)]
 mod tests {
