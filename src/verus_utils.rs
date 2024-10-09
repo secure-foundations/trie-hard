@@ -1,3 +1,5 @@
+#![allow(unreachable_pub)]
+
 use vstd::{prelude::*, slice::*};
 
 verus!{

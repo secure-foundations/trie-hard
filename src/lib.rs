@@ -23,6 +23,7 @@
 #![warn(rust_2018_idioms)]
 
 mod u256;
+mod specs;
 mod verus_utils;
 
 use std::{
@@ -30,6 +31,7 @@ use std::{
     ops::RangeFrom,
 };
 use vstd::{prelude::*, slice::*};
+use specs::*;
 
 
 use u256::U256;
@@ -448,6 +450,36 @@ impl SearchNode<u8> {
     }
 }
 
+impl<I> SearchNode<I> {
+    /// Get the spec children nodes represented by a SearchNode
+    /// TODO: verify
+    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<(u8, int)>;
+}
+
+impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
+    type V = SpecTrieHard<T::V>;
+
+    /// Lift TrieHardSized to SpecTrieHard
+    closed spec fn view(&self) -> Self::V {
+        SpecTrieHard {
+            nodes: Seq::new(self.nodes@.len(), |i| {
+                match self.nodes@[i] {
+                    TrieState::Leaf(k, v) =>
+                        SpecTrieState::Leaf(SpecItem { key: k@, value: v@ }),
+
+                    TrieState::Search(search) =>
+                        SpecTrieState::Search(None, search.view_with_mask_map(self.masks)),
+
+                    TrieState::SearchOrLeaf(k, v, search) =>
+                        SpecTrieState::Search(
+                            Some(SpecItem { key: k@, value: v@ }),
+                            search.view_with_mask_map(self.masks),
+                        ),
+                }
+            }),
+        }
+    }
+}
 
 impl<'a, T> TrieHardSized<'a, T, u8>
 where
@@ -491,6 +523,7 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
+    #[verifier::external_body]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
         requires true
         ensures true
