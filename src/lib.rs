@@ -28,6 +28,8 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
+use vstd::prelude::*;
+
 
 use u256::U256;
 
@@ -410,8 +412,8 @@ where
     }
 }
 
-//////////////////////////////////////////////////////////////////////////////////////
-/// Manual expansion of the `trie_impls!` macro for type u32 
+/////////////////////////////////////////////////////////////////////////////////////
+// Manual expansion of the `trie_impls!` macro for type u32 
 
 impl SearchNode<u32> {
     fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u32>) -> Option<usize> {
