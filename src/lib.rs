@@ -177,7 +177,7 @@ impl<'a, T> Default for TrieHard<'a, T> {
 
 impl<'a, T> TrieHard<'a, T>
 where
-    T: 'a + Copy,
+    T: 'a + Copy + View,
 {
     /// Create an instance of a trie-hard trie with the given keys and values.
     /// The variant returned will be determined based on the number of unique
@@ -398,7 +398,7 @@ impl<'b, 'a, T, I> TrieIterSized<'b, 'a, T, I> {
 
 impl<'b, 'a, T> Iterator for TrieIter<'b, 'a, T>
 where
-    T: Copy,
+    T: Copy + View,
 {
     type Item = (&'a [u8], T);
 
@@ -416,7 +416,7 @@ where
 
 impl<'a, T> FromIterator<&'a T> for TrieHard<'a, &'a T>
 where
-    T: 'a + AsRef<[u8]> + ?Sized,
+    T: 'a + AsRef<[u8]> + ?Sized + View,
 {
     fn from_iter<I: IntoIterator<Item = &'a T>>(values: I) -> Self {
         let values = values
@@ -438,7 +438,10 @@ impl SearchNode<u8> {
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
     #[verifier::external_body]
-    fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> Option<usize> {
+    fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
+        ensures 
+            res matches Some(i) ==> i < trie.nodes.len() // needed for get_from_bytes
+    {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
         (mask_res > 0).then(|| {
@@ -483,30 +486,8 @@ impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
 
 impl<'a, T> TrieHardSized<'a, T, u8>
 where
-    T: Copy
+    T: Copy + View
 {
-
-    /// Get the value stored for the given key. Any key type can be used
-    /// here as long as the type implements `AsRef<[u8]>`. The byte slice
-    /// referenced will serve as the actual key.
-    /// ```
-    /// # use trie_hard::TrieHard;
-    /// let trie = ["and", "ant", "dad", "do", "dot"]
-    ///     .into_iter()
-    ///     .collect::<TrieHard<'_, _>>();
-    ///
-    /// let TrieHard::U8(sized_trie) = trie else {
-    ///     unreachable!()
-    /// };
-    ///
-    /// assert!(sized_trie.get("dad".to_owned()).is_some());
-    /// assert!(sized_trie.get(b"do").is_some());
-    /// assert!(sized_trie.get(b"don't".to_vec()).is_none());
-    /// ```
-    #[verifier::external_body]
-    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Option<T> {
-        self.get_from_bytes(key.as_ref())
-    }
 
     /// Get the value stored for the given byte-slice key.
     /// ```
@@ -523,10 +504,11 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
-    #[verifier::external_body]
+    // #[verifier::external_body]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
         requires true
         ensures true
+            // res matches Some(v) ==> self.view().get(key) == Some(v)
     {
         if self.nodes.len() == 0 {
             return None;
@@ -576,8 +558,29 @@ where
 
 impl<'a, T> TrieHardSized<'a, T, u8>
 where
-    T: Copy
+    T: Copy + View
 {
+    /// Get the value stored for the given key. Any key type can be used
+    /// here as long as the type implements `AsRef<[u8]>`. The byte slice
+    /// referenced will serve as the actual key.
+    /// ```
+    /// # use trie_hard::TrieHard;
+    /// let trie = ["and", "ant", "dad", "do", "dot"]
+    ///     .into_iter()
+    ///     .collect::<TrieHard<'_, _>>();
+    ///
+    /// let TrieHard::U8(sized_trie) = trie else {
+    ///     unreachable!()
+    /// };
+    ///
+    /// assert!(sized_trie.get("dad".to_owned()).is_some());
+    /// assert!(sized_trie.get(b"do").is_some());
+    /// assert!(sized_trie.get(b"don't".to_vec()).is_none());
+    /// ```
+    pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Option<T> {
+        self.get_from_bytes(key.as_ref())
+    }
+
     /// Create an iterator over the entire trie. Emitted items will be
     /// ordered by their keys
     ///
