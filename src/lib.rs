@@ -23,19 +23,22 @@
 #![warn(rust_2018_idioms)]
 
 mod u256;
+mod verus_utils;
 
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
-use vstd::prelude::*;
+use vstd::{prelude::*, slice::*};
 
 
 use u256::U256;
 
+verus!{
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 struct MasksByByteSized<I>([I; 256]);
+}
 
 impl<I> Default for MasksByByteSized<I>
 where
@@ -80,12 +83,14 @@ impl MasksByByte {
     }
 }
 
+verus! {
 /// Inner representation of a trie-hard trie that is generic to a specific size
 /// of integer.
 #[derive(Debug, Clone)]
 pub struct TrieHardSized<'a, T, I> {
     masks: MasksByByteSized<I>,
     nodes: Vec<TrieState<'a, T, I>>,
+}
 }
 
 impl<'a, T, I> Default for TrieHardSized<'a, T, I>
@@ -106,28 +111,21 @@ struct StateSpec<'a> {
     index: usize,
 }
 
+verus! {
 #[derive(Debug, Clone)]
 struct SearchNode<I> {
     mask: I,            // union of all the children's masks
     edge_start: usize,  // location of the first child in the global nodes vector
 }
+}
 
+verus!{
 #[derive(Debug, Clone)]
 enum TrieState<'a, T, I> {
     Leaf(&'a [u8], T),
     Search(SearchNode<I>),
     SearchOrLeaf(&'a [u8], T, SearchNode<I>),
 }
-
-fn foo() {
-    let trie = ["and", "ant", "dad", "do", "dot"]
-        .into_iter()
-        .collect::<TrieHard<'_, _>>();
-
-    match trie.get("dad") {
-        Some(s) => {}
-        None => {}
-    }
 }
 
 
@@ -431,10 +429,13 @@ where
 /////////////////////////////////////////////////////////////////////////////////////
 // Manual expansion of the `trie_impls!` macro for type u8 
 
+verus! {
+
 impl SearchNode<u8> {
 
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
+    #[verifier::external_body]
     fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> Option<usize> {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
@@ -446,6 +447,7 @@ impl SearchNode<u8> {
         })
     }
 }
+
 
 impl<'a, T> TrieHardSized<'a, T, u8>
 where
@@ -469,6 +471,7 @@ where
     /// assert!(sized_trie.get(b"do").is_some());
     /// assert!(sized_trie.get(b"don't".to_vec()).is_none());
     /// ```
+    #[verifier::external_body]
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Option<T> {
         self.get_from_bytes(key.as_ref())
     }
@@ -488,23 +491,31 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
-    pub fn get_from_bytes(&self, key: &[u8]) -> Option<T> {
-        let mut state = self.nodes.get(0)?;
+    pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
+        requires true
+        ensures true
+    {
+        if self.nodes.len() == 0 {
+            return None;
+        }
+        let mut state = &self.nodes[0];
 
-        // while loop
-        for (i, c) in key.iter().enumerate() {
+        // for (i, c) in key.iter().enumerate() {
+        let mut i = 0;
+        while i < key.len() {
+            let c = key[i];
 
             let next_state_opt = match state {
                 // early return, because `Leaf` can have a postfix
                 TrieState::Leaf(k, value) => {
                     return (
                         k.len() == key.len()
-                        && k[i..] == key[i..]
+                        && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
                     ).then_some(*value)
                 }
                 TrieState::Search(search)
                 | TrieState::SearchOrLeaf(_, _, search) => {
-                    search.evaluate(*c, self)
+                    search.evaluate(c, self)
                 }
             };
 
@@ -513,6 +524,8 @@ where
             } else {
                 return None; // the current character `c` doesn't correspond to a child of `state`
             }
+
+            i += 1;
         }
 
         // got to the end of `key`
@@ -525,6 +538,13 @@ where
         }
     }
 
+}   
+}
+
+impl<'a, T> TrieHardSized<'a, T, u8>
+where
+    T: Copy
+{
     /// Create an iterator over the entire trie. Emitted items will be
     /// ordered by their keys
     ///
@@ -602,6 +622,8 @@ where
         TrieIterSized::new(self, node_index)
     }
 }
+
+
 
 impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy {
     fn new(masks: MasksByByteSized<u8>, values: Vec<(&'a [u8], T)>) -> Self {
