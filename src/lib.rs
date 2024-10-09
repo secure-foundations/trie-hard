@@ -429,13 +429,13 @@ where
 }
 
 /////////////////////////////////////////////////////////////////////////////////////
-// Manual expansion of the `trie_impls!` macro for type u32 
+// Manual expansion of the `trie_impls!` macro for type u8 
 
-impl SearchNode<u32> {
+impl SearchNode<u8> {
 
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
-    fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u32>) -> Option<usize> {
+    fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> Option<usize> {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
         (mask_res > 0).then(|| {
@@ -447,7 +447,7 @@ impl SearchNode<u32> {
     }
 }
 
-impl<'a, T> TrieHardSized<'a, T, u32>
+impl<'a, T> TrieHardSized<'a, T, u8>
 where
     T: Copy
 {
@@ -543,7 +543,7 @@ where
     ///     ["and", "ant", "dad", "do", "dot"]
     /// );
     /// ```
-    pub fn iter(&self) -> TrieIterSized<'_, 'a, T, u32> {
+    pub fn iter(&self) -> TrieIterSized<'_, 'a, T, u8> {
         TrieIterSized {
             stack: vec![TrieNodeIter::default()],
             trie: self
@@ -569,7 +569,7 @@ where
     ///     ["dad", "do", "dot"]
     /// );
     /// ```
-    pub fn prefix_search<K: AsRef<[u8]>>(&self, prefix: K) -> TrieIterSized<'_, 'a, T, u32> {
+    pub fn prefix_search<K: AsRef<[u8]>>(&self, prefix: K) -> TrieIterSized<'_, 'a, T, u8> {
         let key = prefix.as_ref();
         let mut node_index = 0;
         let Some(mut state) = self.nodes.get(node_index) else {
@@ -603,8 +603,8 @@ where
     }
 }
 
-impl<'a, T> TrieHardSized<'a, T, u32> where T: 'a + Copy {
-    fn new(masks: MasksByByteSized<u32>, values: Vec<(&'a [u8], T)>) -> Self {
+impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy {
+    fn new(masks: MasksByByteSized<u8>, values: Vec<(&'a [u8], T)>) -> Self {
         let values = values.into_iter().collect::<Vec<_>>();
         let sorted = values
             .iter()
@@ -625,7 +625,7 @@ impl<'a, T> TrieHardSized<'a, T, u32> where T: 'a + Copy {
 
         while let Some(spec) = spec_queue.pop_front() {
             debug_assert_eq!(spec.index, nodes.len());
-            let (state, next_specs) = TrieState::<'_, _, u32>::new(
+            let (state, next_specs) = TrieState::<'_, _, u8>::new(
                 spec,
                 next_index,
                 &masks.0,
@@ -645,11 +645,11 @@ impl<'a, T> TrieHardSized<'a, T, u32> where T: 'a + Copy {
 }
 
 
-impl <'a, T> TrieState<'a, T, u32> where T: 'a + Copy {
+impl <'a, T> TrieState<'a, T, u8> where T: 'a + Copy {
     fn new(
         spec: StateSpec<'a>,
         edge_start: usize,
-        byte_masks: &[u32; 256],
+        byte_masks: &[u8; 256],
         sorted: &BTreeMap<&'a [u8], T>,
     ) -> (Self, Vec<StateSpec<'a>>) {
         let StateSpec { prefix, .. } = spec;
@@ -733,7 +733,7 @@ impl <'a, T> TrieState<'a, T, u32> where T: 'a + Copy {
     }
 }
 
-impl MasksByByteSized<u32> {
+impl MasksByByteSized<u8> {
     fn new(used_bytes: BTreeSet<u8>) -> Self {
         let mut mask = Default::default();
         mask += 1;
@@ -750,7 +750,7 @@ impl MasksByByteSized<u32> {
     }
 }
 
-impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, u32>
+impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, u8>
 where
     T: Copy
 {
@@ -1200,8 +1200,8 @@ macro_rules! trie_impls {
     }
 }
 
-// impl for u32 manually macro-expanded above
-trie_impls! {u8, u16, /* u32, */ u64, u128, U256}
+// impl for u8 manually macro-expanded above
+trie_impls! {/* u8, */ u16, u32, u64, u128, U256}
 
 #[cfg(test)]
 mod tests {
