@@ -108,8 +108,8 @@ struct StateSpec<'a> {
 
 #[derive(Debug, Clone)]
 struct SearchNode<I> {
-    mask: I,
-    edge_start: usize,
+    mask: I,            // union of all the children's masks
+    edge_start: usize,  // location of the first child in the global nodes vector
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +118,18 @@ enum TrieState<'a, T, I> {
     Search(SearchNode<I>),
     SearchOrLeaf(&'a [u8], T, SearchNode<I>),
 }
+
+fn foo() {
+    let trie = ["and", "ant", "dad", "do", "dot"]
+        .into_iter()
+        .collect::<TrieHard<'_, _>>();
+
+    match trie.get("dad") {
+        Some(s) => {}
+        None => {}
+    }
+}
+
 
 /// Enumeration of all the possible sizes of trie-hard tries. An instance of
 /// this enum can be created from any set of arbitrary string or byte slices.
@@ -193,6 +205,7 @@ where
             return Self::default();
         }
 
+        // need while loop impl
         let used_bytes = values
             .iter()
             .flat_map(|(k, _)| k.iter())
@@ -200,6 +213,9 @@ where
             .collect::<BTreeSet<_>>();
 
         let masks = MasksByByte::new(used_bytes);
+        // should give a bijection from bytes to masks
+        // for now, `requires used_bytes.len() <= 8` to do only the U8 mask case 
+
 
         match masks {
             MasksByByte::U8(masks) => {
@@ -416,13 +432,16 @@ where
 // Manual expansion of the `trie_impls!` macro for type u32 
 
 impl SearchNode<u32> {
+
+    // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
+    // result == None ==> self has no child corresponding to c
     fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u32>) -> Option<usize> {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
         (mask_res > 0).then(|| {
             let smaller_bits = mask_res - 1;
             let smaller_bits_mask = smaller_bits & self.mask;
-            let index_offset = smaller_bits_mask.count_ones() as usize;
+            let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
             self.edge_start + index_offset
         })
     }
@@ -472,9 +491,11 @@ where
     pub fn get_from_bytes(&self, key: &[u8]) -> Option<T> {
         let mut state = self.nodes.get(0)?;
 
+        // while loop
         for (i, c) in key.iter().enumerate() {
 
             let next_state_opt = match state {
+                // early return, because `Leaf` can have a postfix
                 TrieState::Leaf(k, value) => {
                     return (
                         k.len() == key.len()
@@ -490,16 +511,17 @@ where
             if let Some(next_state_index) = next_state_opt {
                 state = &self.nodes[next_state_index];
             } else {
-                return None;
+                return None; // the current character `c` doesn't correspond to a child of `state`
             }
         }
 
+        // got to the end of `key`
         if let TrieState::Leaf(k, value)
             | TrieState::SearchOrLeaf(k, value, _) = state
         {
             (k.len() == key.len()).then_some(*value)
         } else {
-            None
+            None // Search node doesn't correspond to the end of a valid string
         }
     }
 
@@ -597,6 +619,7 @@ impl<'a, T> TrieHardSized<'a, T, u32> where T: 'a + Copy {
             index: 0,
         };
 
+        // need to axiomatize the work queue
         let mut spec_queue = VecDeque::new();
         spec_queue.push_back(root_state_spec);
 
@@ -681,6 +704,10 @@ impl <'a, T> TrieState<'a, T, u32> where T: 'a + Copy {
         }
 
         let mut mask = Default::default();
+
+        // This logic requires that the next_states_paired is sorted 
+        // so that the pairs are stored in sorted order (`edge_start + i`
+        // is always the index of the `i`th child of this node)
 
         // Update the index for the next state now that we have ordered by
         let next_state_specs = next_states_paired
