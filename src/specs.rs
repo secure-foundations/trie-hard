@@ -258,6 +258,9 @@ impl<T> SpecTrieHard<T> {
         }
     }
 
+    /// A helper lemma for lemma_view_preserves_get
+    /// i is the current subtree root to start searching for `key`
+    /// where the prefix key[..depth] is already matched to the ascendents of node i
     pub proof fn lemma_view_preserves_get_helper(self, key: Seq<u8>, depth: int, i: int)
         requires
             self.wf(),
