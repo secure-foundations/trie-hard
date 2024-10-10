@@ -20,8 +20,8 @@ pub struct SpecChild<T> {
 }
 
 pub enum SpecTrie<T> {
-    Leaf(SpecItem<T>),
-    Search(Option<SpecItem<T>>, Seq<SpecChild<T>>),
+    Leaf(T),
+    Search(Option<T>, Seq<SpecChild<T>>),
 }
 
 pub struct SpecItem<T> {
@@ -44,34 +44,64 @@ pub struct SpecTrieHard<T> {
 }
 
 impl<T> SpecTrie<T> {
-    pub open spec fn wf_helper(self, prefix: Seq<u8>) -> bool
+    /// Invariant of an abstract trie
+    pub open spec fn wf(self) -> bool
         decreases self
     {
         match self {
-            // The key stored should match the concat of edge labels from root to leaf
-            SpecTrie::Leaf(item) => item.key == prefix,
+            SpecTrie::Leaf(..) => true,
             SpecTrie::Search(item, children) => {
-                &&& item matches Some(item) ==> item.key == prefix
-                &&& forall |i| 0 <= i < children.len() ==>
-                    // Append one byte to the prefix
-                    (#[trigger] children[i]).node.wf_helper(prefix + seq![children[i].prefix])
+                // Children have distinct prefixes
+                &&& forall |i, j| #![auto]
+                        0 <= i < children.len() && 0 <= j < children.len() && i != j ==>
+                        children[i].prefix != children[j].prefix
+
+                // Children are well-formed
+                &&& forall |i| 0 <= i < children.len() ==> (#[trigger] children[i].node).wf()
             }
         }
     }
 
-    /// Invariant of an abstract trie
-    pub open spec fn wf(self) -> bool {
-        self.wf_helper(seq![])
+    /// Search for the key in the subtree rooted in `self`
+    pub open spec fn get(self, key: Seq<u8>) -> Option<T>
+        decreases self
+        when self.wf()
+    {
+        match self {
+            SpecTrie::Leaf(value) => {
+                if key.len() == 0 {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            SpecTrie::Search(value, children) => {
+                if key.len() == 0 {
+                    if value.is_some() {
+                        Some(value.unwrap())
+                    } else {
+                        None
+                    }
+                } else {
+                    if exists |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].prefix {
+                        let i = choose |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].prefix;
+                        children[i].node.get(key.drop_first())
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
     }
 }
 
 impl<T> SpecTrieHard<T> {
     /// Acyclicity (children's index is greater than parent's)
     pub open spec fn wf_acyclic(self) -> bool {
-        &&& forall |i|
-                0 <= i < self.nodes.len() ==>
-                (#[trigger] self.nodes[i] matches SpecTrieState::Search(_, children) ==>
-                forall |j| #![trigger children[j].idx] 0 <= j < children.len() ==> i < children[j].idx < self.nodes.len())
+        forall |i|
+            0 <= i < self.nodes.len() ==>
+            (#[trigger] self.nodes[i] matches SpecTrieState::Search(_, children) ==>
+            forall |j| #![trigger children[j].idx] 0 <= j < children.len() ==> i < children[j].idx < self.nodes.len())
     }
 
     /// SpecItem.key stored in some node should match the labels from root to that node
@@ -90,35 +120,27 @@ impl<T> SpecTrieHard<T> {
             }
         }
     }
-
-    pub open spec fn wf(self) -> bool {
-        &&& self.wf_acyclic()
-        &&& self.wf_prefix(seq![], 0)
+    
+    pub open spec fn wf_distinct_children(self) -> bool
+    {
+        forall |i|
+            0 <= i < self.nodes.len() ==>
+            match #[trigger] self.nodes[i] {
+                SpecTrieState::Leaf(..) => true,
+                SpecTrieState::Search(_, children) => {
+                    // Check if all children have distinct prefixes
+                    forall |j, k| #![auto]
+                        0 <= j < children.len() && 0 <= k < children.len() && j != k ==>
+                        children[j].prefix != children[k].prefix
+                }
+            }
     }
 
-    /// Convert the subtree rooted at i to a SpecTrie
-    pub open spec fn view_helper(self, i: int) -> SpecTrie<T>
-        decreases self.nodes.len() - i
-        when self.wf() && 0 <= i < self.nodes.len()
-    {
-        match self.nodes[i] {
-            SpecTrieState::Leaf(item) => SpecTrie::Leaf(item),
-            SpecTrieState::Search(item, children) => {
-                SpecTrie::Search(
-                    item,
-                    // Convert each child
-                    Seq::new(children.len(), |j| SpecChild {
-                        prefix: children[j].prefix,
-                        node: if 0 <= j < children.len() {
-                            self.view_helper(children[j].idx)
-                        } else {
-                            // Not reachable
-                            SpecTrie::Search(None, seq![])
-                        },
-                    }),
-                )
-            }
-        }
+    pub open spec fn wf(self) -> bool {
+        &&& self.nodes.len() != 0
+        &&& self.wf_acyclic()
+        &&& self.wf_prefix(seq![], 0)
+        &&& self.wf_distinct_children()
     }
 
     /// Check if there is a child with the given prefix
@@ -179,6 +201,98 @@ impl<T> SpecTrieHard<T> {
     pub open spec fn get(self, key: Seq<u8>) -> Option<T> {
         self.get_helper(key, 0, 0)
     }
+
+    /// Helper lemma for lemma_view_preserves_wf
+    pub proof fn lemma_view_preserves_wf_helper(self, i: int)
+        requires
+            self.wf(),
+            0 <= i < self.nodes.len(),
+        ensures self.view_helper(i).wf(),
+        decreases self.nodes.len() - i
+    {
+        match self.nodes[i] {
+            SpecTrieState::Leaf(item) => {},
+            SpecTrieState::Search(item, children) => {
+                self.axiom_view_helper(i);
+
+                let children_view = self.view_helper(i)->Search_1;
+
+                assert forall |j| 0 <= j < children.len() implies
+                    (#[trigger] children_view[j].node).wf() by {
+                    self.lemma_view_preserves_wf_helper(children[j].idx);
+                }
+            }
+        }
+    }
+
+    /// Lifting SpecTrieHard to SpecTrie preserves well-formedness
+    pub proof fn lemma_view_preserves_wf(self)
+        requires self.wf()
+        ensures self.view().wf()
+    {
+        self.lemma_view_preserves_wf_helper(0);
+    }
+
+    pub proof fn lemma_view_preserves_get(self, key: Seq<u8>)
+        requires self.wf()
+        ensures self.view().get(key) == self.get(key)
+    {
+        // TODO
+        admit();
+    }
+}
+
+impl<T> SpecTrieHard<T> {
+    /// Convert the subtree rooted at i to a SpecTrie
+    pub open spec fn view_helper(self, i: int) -> SpecTrie<T>
+        decreases self.nodes.len() - i
+        when self.wf() && 0 <= i < self.nodes.len()
+    {
+        match self.nodes[i] {
+            SpecTrieState::Leaf(item) => SpecTrie::Leaf(item.value),
+            SpecTrieState::Search(item, children) =>
+                SpecTrie::Search(
+                    match item {
+                        Some(item) => Some(item.value),
+                        None => None,
+                    },
+                    // Convert each child
+                    Seq::new(children.len(), |j| SpecChild {
+                        prefix: children[j].prefix,
+                        node: if 0 <= j < children.len() {
+                            self.view_helper(children[j].idx)
+                        } else {
+                            // Not reachable
+                            SpecTrie::Search(None, seq![])
+                        },
+                    }),
+                ),
+        }
+    }
+
+    /// TODO: somehow Verus is unable to deduce this
+    #[verifier::external_body]
+    pub proof fn axiom_view_helper(self, i: int)
+        requires
+            self.wf(),
+            0 <= i < self.nodes.len(),
+        ensures
+            self.nodes[i] matches SpecTrieState::Search(item, children) ==>
+                self.view_helper(i) == SpecTrie::Search(
+                    match item {
+                        Some(item) => Some(item.value),
+                        None => None,
+                    },
+                    // Convert each child
+                    Seq::new(children.len(), |j| SpecChild {
+                        prefix: children[j].prefix,
+                        node: if 0 <= j < children.len() {
+                            self.view_helper(children[j].idx)
+                        } else {
+                            SpecTrie::Search(None, seq![])
+                        },
+                    }),
+                );
 }
 
 impl<T> View for SpecTrieHard<T> {
