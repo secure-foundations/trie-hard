@@ -77,11 +77,7 @@ impl<T> SpecTrie<T> {
             }
             SpecTrie::Search(value, children) => {
                 if key.len() == 0 {
-                    if value.is_some() {
-                        Some(value.unwrap())
-                    } else {
-                        None
-                    }
+                    value
                 } else {
                     if exists |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].prefix {
                         let i = choose |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].prefix;
@@ -145,7 +141,7 @@ impl<T> SpecTrieHard<T> {
 
     /// Check if there is a child with the given prefix
     /// i.e. SearchNote::evaluate
-    pub open spec fn find_children(self, prefix: u8, children: Seq<SpecChildRef>) -> Option<int>
+    pub open spec fn find_children(prefix: u8, children: Seq<SpecChildRef>) -> Option<int>
         decreases children.len()
     {
         if children.len() <= 0 {
@@ -154,7 +150,7 @@ impl<T> SpecTrieHard<T> {
             if children[0].prefix == prefix {
                 Some(children[0].idx)
             } else {
-                self.find_children(prefix, children.drop_first())
+                Self::find_children(prefix, children.drop_first())
             }
         }
     }
@@ -162,7 +158,7 @@ impl<T> SpecTrieHard<T> {
     /// Search from the subtree at i
     pub open spec fn get_helper(self, key: Seq<u8>, depth: int, i: int) -> Option<T>
         decreases self.nodes.len() - i
-        when self.wf() && 0 <= depth < key.len() && 0 <= i < self.nodes.len()
+        when self.wf() && 0 <= depth <= key.len() && 0 <= i < self.nodes.len()
     {
         match self.nodes[i] {
             SpecTrieState::Leaf(item) => {
@@ -173,11 +169,14 @@ impl<T> SpecTrieHard<T> {
                 }
             }
             SpecTrieState::Search(item, children) => {
-                if item.is_some() && item.unwrap().key == key {
-                    Some(item.unwrap().value)
+                if key.len() == depth {
+                    match item {
+                        Some(item) => Some(item.value),
+                        None => None,
+                    }
                 } else {
                     // Check if there's any children with prefix key[depth]
-                    if let Some(next) = self.find_children(key[depth], children) {
+                    if let Some(next) = Self::find_children(key[depth], children) {
                         if i < next < self.nodes.len() {
                             self.get_helper(key, depth + 1, next)
                         } else {
@@ -229,26 +228,108 @@ impl<T> SpecTrieHard<T> {
         self.lemma_view_preserves_wf_helper(0, 0);
     }
 
+    /// find_children returns some iff there is a children with matching prefix
+    pub proof fn lemma_find_children_soundness(prefix: u8, children: Seq<SpecChildRef>)
+        ensures
+            Self::find_children(prefix, children) matches Some(idx) ==>
+                exists |i| #![trigger children[i]]
+                    0 <= i < children.len() &&
+                    children[i].prefix == prefix &&
+                    children[i].idx == idx,
+
+            Self::find_children(prefix, children).is_none() ==>
+                forall |i| 0 <= i < children.len() ==> (#[trigger] children[i]).prefix != prefix,
+    
+        decreases children.len()
+    {
+        if children.len() > 0 {
+            Self::lemma_find_children_soundness(prefix, children.drop_first());
+
+            if children[0].prefix != prefix {
+                if Self::find_children(prefix, children).is_none() {
+                    assert forall |i| 0 <= i < children.len() implies
+                        (#[trigger] children[i]).prefix != prefix by {
+                        if i != 0 {
+                            assert(children[i] == children.drop_first()[i - 1]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub proof fn lemma_view_preserves_get_helper(self, key: Seq<u8>, depth: int, i: int)
         requires
             self.wf(),
-            0 <= depth < key.len(),
+            0 <= depth <= key.len(),
             0 <= i < self.nodes.len(),
+
+            self.wf_prefix(key.take(depth), i),
+            self.view_helper(depth, i).wf(),
         
         ensures
             self.get_helper(key, depth, i) == self.view_helper(depth, i).get(key.skip(depth))
     
         decreases self.nodes.len() - i
     {
-        admit();
+        match self.nodes[i] {
+            SpecTrieState::Leaf(item) => {
+                assert(item.key == key ==> item.key.skip(depth) == key.skip(depth));
+                assert(item.key.skip(depth) == key.skip(depth) ==> item.key == key);
+            },
+            SpecTrieState::Search(item, children) => {
+                if key.len() == depth {
+                    return;
+                }
+
+                self.axiom_view_helper(depth, i);
+                Self::lemma_find_children_soundness(key[depth], children);
+                
+                if let Some(next) = Self::find_children(key[depth], children) {
+                    let prefix = key[depth];
+
+                    // Uniqueness of next (by wf)
+                    // assert(forall |i| 0 <= i < children.len() && children[i].prefix == prefix
+                    //     ==> next == (#[trigger] children[i]).idx);
+
+                    assert(key.take(depth + 1) == key.take(depth) + seq![prefix]);
+                    // assert(0 <= next < self.nodes.len());
+                    // assert(i < next < self.nodes.len());
+
+                    let view = self.view_helper(depth, i);
+                    let children_view = view->Search_1;
+
+                    self.lemma_view_preserves_wf_helper(depth + 1, next);
+                    self.lemma_view_preserves_get_helper(key, depth + 1, next);
+
+                    // self.nodes[next] mapped through view is the same
+                    // not found in SpecTrie::get
+                    assert(exists |i| #![trigger children[i]]
+                        0 <= i < children_view.len() &&
+                        children_view[i].prefix == prefix &&
+                        children_view[i].node == self.view_helper(depth + 1, next));
+                        
+                    // let i = choose |i| 0 <= i < children_view.len() && prefix == #[trigger] children_view[i].prefix;
+                    // assert(exists |i| 0 <= i < children_view.len() && prefix == #[trigger] children_view[i].prefix);
+                    // assert(forall |j| 0 <= j < children_view.len() && children_view[j].prefix == key[depth]
+                    //     ==> i == j);
+                    // assert(key.skip(depth)[0] == key[depth]);
+
+                    assert(key.skip(depth).drop_first() == key.skip(depth + 1));
+                }
+            }
+        }
     }
 
     pub proof fn lemma_view_preserves_get(self, key: Seq<u8>)
         requires self.wf()
-        ensures self.view().get(key) == self.get(key)
+        ensures self.get(key) == self.view().get(key)
     {
-        // TODO
-        admit();
+        let empty: Seq<u8> = seq![];
+        assert(key.take(0) == empty);
+        assert(key.skip(0) == key);
+        self.lemma_view_preserves_wf();
+        self.lemma_view_preserves_get_helper(key, 0, 0);
     }
 }
 
