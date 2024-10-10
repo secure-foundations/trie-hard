@@ -93,6 +93,31 @@ impl<T> SpecTrie<T> {
             }
         }
     }
+
+    // Currently fails to prove termination
+    pub open spec fn as_map_helper(self, prefix: Seq<u8>) -> Map<Seq<u8>, T>
+        decreases self
+        when self.wf()
+    {
+        match self {
+            SpecTrie::Leaf(key, value) => map![(prefix.add(key)) => value],
+            SpecTrie::Search(value_opt, children) => {
+                let this_elem_map = match value_opt {
+                    Some(value) => map![prefix => value],
+                    None => map![],
+                };
+                children.fold_left(this_elem_map, |acc: Map<Seq<u8>, T>, child: SpecChild<T>| {
+                    acc.union_prefer_right(child.node.as_map_helper(prefix.add(seq![child.prefix])))
+                })
+            }
+        }
+    }
+
+    pub open spec fn as_map(self) -> Map<Seq<u8>, T>
+    {
+        self.as_map_helper(seq![])
+    }
+
 }
 
 impl<T> SpecTrieHard<T> {
