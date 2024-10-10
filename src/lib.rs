@@ -89,7 +89,7 @@ verus! {
 /// Inner representation of a trie-hard trie that is generic to a specific size
 /// of integer.
 #[derive(Debug, Clone)]
-pub struct TrieHardSized<'a, T, I> {
+pub struct TrieHardSized<'a, T, I> where T: View {
     masks: MasksByByteSized<I>,
     nodes: Vec<TrieState<'a, T, I>>,
 }
@@ -98,6 +98,7 @@ pub struct TrieHardSized<'a, T, I> {
 impl<'a, T, I> Default for TrieHardSized<'a, T, I>
 where
     I: Default + Copy,
+    T: View,
 {
     fn default() -> Self {
         Self {
@@ -123,7 +124,7 @@ struct SearchNode<I> {
 
 verus!{
 #[derive(Debug, Clone)]
-enum TrieState<'a, T, I> {
+enum TrieState<'a, T, I> where T: View {
     Leaf(&'a [u8], T),
     Search(SearchNode<I>),
     SearchOrLeaf(&'a [u8], T, SearchNode<I>),
@@ -154,7 +155,7 @@ enum TrieState<'a, T, I> {
 /// the inner, `[TrieHardSized]` which will use only the size required.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
-pub enum TrieHard<'a, T> {
+pub enum TrieHard<'a, T> where T: View {
     /// Trie-hard using u8s for storage. For sets with 1..=8 unique bytes
     U8(TrieHardSized<'a, T, u8>),
     /// Trie-hard using u16s for storage. For sets with 9..=16 unique bytes
@@ -169,7 +170,9 @@ pub enum TrieHard<'a, T> {
     U256(TrieHardSized<'a, T, U256>),
 }
 
-impl<'a, T> Default for TrieHard<'a, T> {
+impl<'a, T> Default for TrieHard<'a, T> 
+where T: View
+{
     fn default() -> Self {
         TrieHard::U8(TrieHardSized::default())
     }
@@ -341,7 +344,7 @@ where
 
 /// Structure used for iterative over the contents of trie
 #[derive(Debug)]
-pub enum TrieIter<'b, 'a, T> {
+pub enum TrieIter<'b, 'a, T> where T: View{
     /// Variant for iterating over trie-hard tries built on u8
     U8(TrieIterSized<'b, 'a, T, u8>),
     /// Variant for iterating over trie-hard tries built on u16
@@ -372,12 +375,14 @@ enum TrieNodeIterStage {
 /// Structure for iterating of a trie-hard trie built on specific a specific
 /// integer size
 #[derive(Debug)]
-pub struct TrieIterSized<'b, 'a, T, I> {
+pub struct TrieIterSized<'b, 'a, T, I> where T: View {
     stack: Vec<TrieNodeIter>,
     trie: &'b TrieHardSized<'a, T, I>,
 }
 
-impl<'b, 'a, T, I> TrieIterSized<'b, 'a, T, I> {
+impl<'b, 'a, T, I> TrieIterSized<'b, 'a, T, I> 
+    where T: View
+{
     fn empty(trie: &'b TrieHardSized<'a, T, I>) -> Self {
         Self {
             stack: Default::default(),
@@ -438,9 +443,10 @@ impl SearchNode<u8> {
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
     #[verifier::external_body]
-    fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
+    fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
         ensures 
-            res matches Some(i) ==> i < trie.nodes.len() // needed for get_from_bytes
+            res matches Some(i) ==> i < trie.nodes.len(), // needed for get_from_bytes
+            res matches Some(i) ==> trie@.find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
@@ -506,9 +512,9 @@ where
     /// ```
     // #[verifier::external_body]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
-        requires true
-        ensures true
-            // res matches Some(v) ==> self.view().get(key) == Some(v)
+        requires self.view().wf()
+        // ensures res matches Some(v) ==> self@.get(key@) matches Some(v_spec) && v@ == v_spec,
+        //         res is None ==> self@.nodes.len() == 0 || self@.get(key@) is None
     {
         if self.nodes.len() == 0 {
             return None;
@@ -517,7 +523,11 @@ where
 
         // for (i, c) in key.iter().enumerate() {
         let mut i = 0;
-        while i < key.len() {
+        while i < key.len() 
+            invariant 
+                0 <= i <= key.len(),
+                // get_helper(self.view(), key, i, next_state_opt.unwrap())                
+        {
             let c = key[i];
 
             let next_state_opt = match state {
@@ -661,7 +671,7 @@ where
 
 
 
-impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy {
+impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy + View {
     fn new(masks: MasksByByteSized<u8>, values: Vec<(&'a [u8], T)>) -> Self {
         let values = values.into_iter().collect::<Vec<_>>();
         let sorted = values
@@ -703,7 +713,7 @@ impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy {
 }
 
 
-impl <'a, T> TrieState<'a, T, u8> where T: 'a + Copy {
+impl <'a, T> TrieState<'a, T, u8> where T: 'a + Copy + View {
     fn new(
         spec: StateSpec<'a>,
         edge_start: usize,
@@ -810,7 +820,7 @@ impl MasksByByteSized<u8> {
 
 impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, u8>
 where
-    T: Copy
+    T: Copy + View
 {
     type Item = (&'a [u8], T);
 
@@ -886,7 +896,7 @@ macro_rules! trie_impls {
     (_impl $int_type:ty) => {
 
         impl SearchNode<$int_type> {
-            fn evaluate<T>(&self, c: u8, trie: &TrieHardSized<'_, T, $int_type>) -> Option<usize> {
+            fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, $int_type>) -> Option<usize> {
                 let c_mask = trie.masks.0[c as usize];
                 let mask_res = self.mask & c_mask;
                 (mask_res > 0).then(|| {
@@ -900,7 +910,7 @@ macro_rules! trie_impls {
 
         impl<'a, T> TrieHardSized<'a, T, $int_type>
         where
-            T: Copy
+            T: Copy + View
         {
 
             /// Get the value stored for the given key. Any key type can be used
@@ -1051,7 +1061,7 @@ macro_rules! trie_impls {
             }
         }
 
-        impl<'a, T> TrieHardSized<'a, T, $int_type> where T: 'a + Copy {
+        impl<'a, T> TrieHardSized<'a, T, $int_type> where T: 'a + Copy + View {
             fn new(masks: MasksByByteSized<$int_type>, values: Vec<(&'a [u8], T)>) -> Self {
                 let values = values.into_iter().collect::<Vec<_>>();
                 let sorted = values
@@ -1092,7 +1102,7 @@ macro_rules! trie_impls {
         }
 
 
-        impl <'a, T> TrieState<'a, T, $int_type> where T: 'a + Copy {
+        impl <'a, T> TrieState<'a, T, $int_type> where T: 'a + Copy + View {
             fn new(
                 spec: StateSpec<'a>,
                 edge_start: usize,
@@ -1195,7 +1205,7 @@ macro_rules! trie_impls {
 
         impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, $int_type>
         where
-            T: Copy
+            T: Copy + View
         {
             type Item = (&'a [u8], T);
 
