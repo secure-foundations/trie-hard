@@ -446,7 +446,7 @@ impl SearchNode<u8> {
     fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
         ensures 
             res matches Some(i) ==> i < trie.nodes.len(), // needed for get_from_bytes
-            res matches Some(i) ==> trie@.find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
+            res matches Some(i) ==> SpecTrieHard::<T>::find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;

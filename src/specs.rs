@@ -286,36 +286,21 @@ impl<T> SpecTrieHard<T> {
                 Self::lemma_find_children_soundness(key[depth], children);
                 
                 if let Some(next) = Self::find_children(key[depth], children) {
-                    let prefix = key[depth];
-
-                    // Uniqueness of next (by wf)
-                    // assert(forall |i| 0 <= i < children.len() && children[i].prefix == prefix
-                    //     ==> next == (#[trigger] children[i]).idx);
-
-                    assert(key.take(depth + 1) == key.take(depth) + seq![prefix]);
-                    // assert(0 <= next < self.nodes.len());
-                    // assert(i < next < self.nodes.len());
-
-                    let view = self.view_helper(depth, i);
-                    let children_view = view->Search_1;
+                    assert(key.take(depth + 1) == key.take(depth) + seq![key[depth]]);
+                    assert(key.skip(depth).drop_first() == key.skip(depth + 1));
 
                     self.lemma_view_preserves_wf_helper(depth + 1, next);
                     self.lemma_view_preserves_get_helper(key, depth + 1, next);
+
+                    let view = self.view_helper(depth, i);
+                    let children_view = view->Search_1;
 
                     // self.nodes[next] mapped through view is the same
                     // not found in SpecTrie::get
                     assert(exists |i| #![trigger children[i]]
                         0 <= i < children_view.len() &&
-                        children_view[i].prefix == prefix &&
+                        children_view[i].prefix == key[depth] &&
                         children_view[i].node == self.view_helper(depth + 1, next));
-                        
-                    // let i = choose |i| 0 <= i < children_view.len() && prefix == #[trigger] children_view[i].prefix;
-                    // assert(exists |i| 0 <= i < children_view.len() && prefix == #[trigger] children_view[i].prefix);
-                    // assert(forall |j| 0 <= j < children_view.len() && children_view[j].prefix == key[depth]
-                    //     ==> i == j);
-                    // assert(key.skip(depth)[0] == key[depth]);
-
-                    assert(key.skip(depth).drop_first() == key.skip(depth + 1));
                 }
             }
         }
