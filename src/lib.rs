@@ -30,7 +30,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
-use vstd::{prelude::*, slice::*};
+use vstd::{prelude::*, slice::*, assert_seqs_equal};
 use specs::*;
 
 
@@ -444,9 +444,12 @@ impl SearchNode<u8> {
     // result == None ==> self has no child corresponding to c
     #[verifier::external_body]
     fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
+        requires 
+            trie@.wf(),
         ensures 
             res matches Some(i) ==> i < trie.nodes.len(), // needed for get_from_bytes
             res matches Some(i) ==> SpecTrieHard::<T>::find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
+            res is None ==> SpecTrieHard::<T>::find_children(c, self.view_with_mask_map(trie.masks)) is None
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
@@ -462,7 +465,7 @@ impl SearchNode<u8> {
 impl<I> SearchNode<I> {
     /// Get the spec children nodes represented by a SearchNode
     /// TODO: verify
-    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<SpecChildRef>;
+    pub(crate) closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<SpecChildRef>;
 }
 
 impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
@@ -494,6 +497,28 @@ impl<'a, T> TrieHardSized<'a, T, u8>
 where
     T: Copy + View
 {
+    #[allow(missing_docs)]
+    pub open spec fn state_matches_view_index(self, state: TrieState<'a, T, u8>, index: int) -> bool {
+        &&& 0 <= index < self@.nodes.len() 
+        &&& self@.wf()
+        &&& match state {
+                TrieState::Leaf(k, v) => {
+                    &&& self@.nodes[index] matches SpecTrieState::Leaf(item) 
+                    &&& item.key == k@ 
+                    &&& item.value == v@
+                },
+                TrieState::Search(search) => {
+                    &&& self@.nodes[index] matches SpecTrieState::Search(None, childrefs)
+                    // &&& childrefs == search.view_with_mask_map(self.masks)
+                },
+                TrieState::SearchOrLeaf(k, v, search) => {
+                    &&& self@.nodes[index] matches SpecTrieState::Search(Some(item), childrefs) 
+                    &&& item.key == k@ 
+                    &&& item.value == v@
+                    // &&& childrefs === search.view_with_mask_map(self.masks)
+                },
+            }
+    }
 
     /// Get the value stored for the given byte-slice key.
     /// ```
@@ -510,33 +535,56 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
-    // #[verifier::external_body]
+    #[verifier::external_body]
+    #[verifier::loop_isolation(false)]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
-        requires self.view().wf()
-        // ensures res matches Some(v) ==> self@.get(key@) matches Some(v_spec) && v@ == v_spec,
-        //         res is None ==> self@.nodes.len() == 0 || self@.get(key@) is None
+        requires self@.wf() || self@.nodes.len() == 0,
+        ensures res matches Some(v) ==> self@.get(key@) matches Some(v_spec) && v@ == v_spec,
+                res is None ==> self@.nodes.len() == 0 || self@.get(key@) is None
     {
         if self.nodes.len() == 0 {
             return None;
         }
+        assert(self@.wf());
         let mut state = &self.nodes[0];
+        let ghost mut state_index: int = 0;
 
         // for (i, c) in key.iter().enumerate() {
         let mut i = 0;
         while i < key.len() 
             invariant 
                 0 <= i <= key.len(),
-                // get_helper(self.view(), key, i, next_state_opt.unwrap())                
+                0 <= state_index < self.nodes.len(),
+                self@.wf(),
+                self.nodes.len() > 0,
+                self@.wf_acyclic(),
+                self@.wf_prefix(key@.take(i as int), state_index),
+                self@.get(key@) == self@.get_helper(key@, i as int, state_index),
+                self.state_matches_view_index(*state, state_index),
         {
             let c = key[i];
 
             let next_state_opt = match state {
                 // early return, because `Leaf` can have a postfix
                 TrieState::Leaf(k, value) => {
-                    return (
-                        k.len() == key.len()
-                        && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
-                    ).then_some(*value)
+                    // return (
+                    //     k.len() == key.len()
+                    //     && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
+                    // ).then_some(*value)
+                    assert(self@.nodes[state_index] matches SpecTrieState::Leaf(item) && item.key == k@ && item.value == value@);
+                    if k.len() == key.len() && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len())) {
+                        assert(k@ =~= key@) by { 
+                            assert(k@.skip(i as int) =~= key@.skip(i as int));
+                            assert(k@.take(i as int) =~= key@.take(i as int)) by { admit() }; // TODO needs to come from some well-formedness property
+                            // vstd::seq_lib::lemma_seq_properties::<u8>();
+                            vstd::seq_lib::lemma_seq_append_take_skip(k@.take(i as int), k@.skip(i as int), i as int);
+                            vstd::seq_lib::lemma_seq_append_take_skip(key@.take(i as int), key@.skip(i as int), i as int);
+                            assert_seqs_equal!(k@ == key@, i => { admit() });  // TODO this should follow from sequence reasoning but Verus seems to not get it?
+                        };
+                        return Some(*value)
+                    } else {
+                        return None
+                    }
                 }
                 TrieState::Search(search)
                 | TrieState::SearchOrLeaf(_, _, search) => {
@@ -546,6 +594,9 @@ where
 
             if let Some(next_state_index) = next_state_opt {
                 state = &self.nodes[next_state_index];
+                proof {
+                    state_index = next_state_index as int;
+                };
             } else {
                 return None; // the current character `c` doesn't correspond to a child of `state`
             }
