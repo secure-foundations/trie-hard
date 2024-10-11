@@ -519,7 +519,7 @@ where
                 },
             }
     }
-
+    
     /// Get the value stored for the given byte-slice key.
     /// ```
     /// # use trie_hard::TrieHard;
@@ -535,8 +535,9 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
-    #[verifier::external_body]
-    #[verifier::loop_isolation(false)]
+    // #[verifier::external_body]
+    // #[verifier::loop_isolation(false)]
+    #[verifier::spinoff_prover]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
         requires self@.wf() || self@.nodes.len() == 0,
         ensures res matches Some(v) ==> self@.get(key@) matches Some(v_spec) && v@ == v_spec,
@@ -548,9 +549,12 @@ where
         assert(self@.wf());
         let mut state = &self.nodes[0];
         let ghost mut state_index: int = 0;
+        assert(self@.wf_prefix(seq![], state_index));
 
         // for (i, c) in key.iter().enumerate() {
         let mut i = 0;
+        let ghost empty_seq: Seq<u8> = seq![];
+        assert(key@.take(i as int) == empty_seq);
         while i < key.len() 
             invariant 
                 0 <= i <= key.len(),
@@ -571,15 +575,14 @@ where
                     //     k.len() == key.len()
                     //     && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
                     // ).then_some(*value)
-                    assert(self@.nodes[state_index] matches SpecTrieState::Leaf(item) && item.key == k@ && item.value == value@);
+                    // assert(self@.nodes[state_index] matches SpecTrieState::Leaf(item) && item.key == k@ && item.value == value@);
                     if k.len() == key.len() && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len())) {
                         assert(k@ =~= key@) by { 
                             assert(k@.skip(i as int) =~= key@.skip(i as int));
-                            assert(k@.take(i as int) =~= key@.take(i as int)) by { admit() }; // TODO needs to come from some well-formedness property
-                            // vstd::seq_lib::lemma_seq_properties::<u8>();
-                            vstd::seq_lib::lemma_seq_append_take_skip(k@.take(i as int), k@.skip(i as int), i as int);
-                            vstd::seq_lib::lemma_seq_append_take_skip(key@.take(i as int), key@.skip(i as int), i as int);
-                            assert_seqs_equal!(k@ == key@, i => { admit() });  // TODO this should follow from sequence reasoning but Verus seems to not get it?
+                            assert(k@.take(i as int) =~= key@.take(i as int)); // TODO needs to come from some well-formedness property
+                            verus_utils::lemma_seq_take_append_skip(k@, i as int);
+                            verus_utils::lemma_seq_take_append_skip(key@, i as int);
+                            assert_seqs_equal!(k@ == key@);  // TODO this should follow from sequence reasoning but Verus seems to not get it?
                         };
                         return Some(*value)
                     } else {
@@ -598,6 +601,8 @@ where
                     state_index = next_state_index as int;
                 };
             } else {
+                // failing return path
+                // assume(false);
                 return None; // the current character `c` doesn't correspond to a child of `state`
             }
 
@@ -608,7 +613,14 @@ where
         if let TrieState::Leaf(k, value)
             | TrieState::SearchOrLeaf(k, value, _) = state
         {
-            (k.len() == key.len()).then_some(*value)
+            // (k.len() == key.len()).then_some(*value)
+            if k.len() == key.len() {
+                // failing return path
+                // assume(false);
+                Some(*value)
+            } else {
+                None
+            }
         } else {
             None // Search node doesn't correspond to the end of a valid string
         }

@@ -18,4 +18,9 @@ pub fn ex_core_bool_then_some<T>(cond: bool, val: T) -> (result: Option<T>)
     cond.then_some(val)
 }
 
+pub proof fn lemma_seq_take_append_skip<T>(s: Seq<T>, n: int)
+    requires 0 <= n < s.len()
+    ensures s =~= s.take(n).add(s.skip(n))
+{}
+
 }
