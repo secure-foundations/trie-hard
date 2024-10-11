@@ -165,14 +165,7 @@ impl<T> SpecTrieHard<T> {
         // For any node, there is a path from the root to that node
         forall |i: int| #![trigger self.nodes[i]]
             0 <= i < self.nodes.len() ==>
-            exists |ancestors: Seq<int>| {
-                &&& ancestors.len() > 0
-                &&& #[trigger] ancestors[0] == 0
-                &&& ancestors[ancestors.len() - 1] == i
-                &&& forall |j| #![trigger ancestors[j]]
-                        0 <= j < ancestors.len() - 1 ==>
-                        self.is_parent_of(ancestors[j], ancestors[j + 1])
-            }
+            exists |ancestors: Seq<int>| self.is_path(ancestors, 0, i)
     }
 
     pub open spec fn wf(self) -> bool {
@@ -181,6 +174,15 @@ impl<T> SpecTrieHard<T> {
         &&& self.wf_prefix(seq![], 0)
         &&& self.wf_distinct_children()
         &&& self.wf_no_junk()
+    }
+
+    pub open spec fn is_path(self, path: Seq<int>, i: int, j: int) -> bool
+    {
+        &&& path.len() > 0
+        &&& path[0] == i
+        &&& path.last() == j
+        &&& forall |k| 0 <= k < path.len() - 1 ==>
+            self.is_parent_of(#[trigger] path[k], path[k + 1])
     }
 
     /// Check if node j is a child of i
@@ -387,25 +389,15 @@ impl<T> SpecTrieHard<T> {
         if i >= self.nodes.len() {
             None
         } else {
-            match self.nodes[i] {
-                SpecTrieState::Leaf(item) => {
+            match self.get_item(i) {
+                Some(item) => {
                     if item.key == key {
                         Some(item.value)
                     } else {
                         self.get_alt_helper(key, i + 1)
                     }
                 }
-                SpecTrieState::Search(item, children) => {
-                    if let Some(item) = item {
-                        if item.key == key {
-                            Some(item.value)
-                        } else {
-                            self.get_alt_helper(key, i + 1)
-                        }
-                    } else {
-                        self.get_alt_helper(key, i + 1)
-                    }
-                }
+                None => self.get_alt_helper(key, i + 1),
             }
         }
     }
@@ -429,11 +421,52 @@ impl<T> SpecTrieHard<T> {
         requires self.wf()
         ensures
             forall |i: int, j: int|
-                0 <= i < self.nodes.len() && 0 <= j < self.nodes.len() ==>
+                0 <= i < self.nodes.len() && 0 <= j < self.nodes.len() && i != j ==>
                 match (#[trigger] self.get_item(i), #[trigger] self.get_item(j)) {
                     (Some(item1), Some(item2)) => item1.key != item2.key,
                     _ => true,
                 }
+    {
+        assert forall |i: int, j: int|
+            0 <= i < self.nodes.len() && 0 <= j < self.nodes.len() && i != j implies
+            match (#[trigger] self.get_item(i), #[trigger] self.get_item(j)) {
+                (Some(item1), Some(item2)) => item1.key != item2.key,
+                _ => true,
+            }
+        by {
+            // wf implies there are paths from root to i and j
+            let _ = self.nodes[i];
+            let _ = self.nodes[j];
+            assert(exists |ancestors: Seq<int>| self.is_path(ancestors, 0, i));
+            assert(exists |ancestors: Seq<int>| self.is_path(ancestors, 0, j));
+
+            let path_i = choose |ancestors: Seq<int>| self.is_path(ancestors, 0, i);
+            let path_j = choose |ancestors: Seq<int>| self.is_path(ancestors, 0, j);
+        
+            // Find the first diverging position of these two paths (which must exists since i != j)
+
+            admit();
+        }
+    }
+
+    pub proof fn lemma_get_to_exists_key_helper(self, key: Seq<u8>, depth: int, j: int)
+        requires self.wf()
+        ensures
+            // TODO: Maybe add a witness function that directly computes i?
+            self.get_helper(key, depth, j) matches Some(value) ==>
+                exists |i| {
+                    &&& j <= i < self.nodes.len()
+                    &&& #[trigger] self.get_item(i) matches Some(item)
+                    &&& item.key == key
+                    &&& item.value == value
+                },
+
+            // TODO: Need to use wf_no_junk here
+            self.get_helper(key, depth, j).is_none() ==>
+                forall |i| j <= i < self.nodes.len() ==>
+                    (#[trigger] self.get_item(i) matches Some(item) ==>
+                        item.key != key),
+        decreases self.nodes.len() - j
     {
         admit();
     }
@@ -448,6 +481,7 @@ impl<T> SpecTrieHard<T> {
                     &&& 0 <= i < self.nodes.len()
                     &&& #[trigger] self.get_item(i) matches Some(item)
                     &&& item.key == key
+                    &&& item.value == value
                 },
 
             self.get(key).is_none() ==>
@@ -455,9 +489,33 @@ impl<T> SpecTrieHard<T> {
                     (#[trigger] self.get_item(i) matches Some(item) ==>
                         item.key != key),
     {
-        admit();
+        self.lemma_get_to_exists_key_helper(key, 0, 0);
     }
 
+    /// Helper for lemma_get_alt_to_exists_key
+    pub proof fn lemma_get_alt_to_exists_key_helper(self, key: Seq<u8>, j: int)
+        requires self.wf()
+        ensures
+            self.get_alt_helper(key, j) matches Some(value) ==>
+                exists |i| {
+                    &&& j <= i < self.nodes.len()
+                    &&& #[trigger] self.get_item(i) matches Some(item)
+                    &&& item.key == key
+                    &&& item.value == value
+                },
+
+            self.get_alt_helper(key, j).is_none() ==>
+                forall |i| j <= i < self.nodes.len() ==>
+                    (#[trigger] self.get_item(i) matches Some(item) ==>
+                        item.key != key),
+    
+        decreases self.nodes.len() - j
+    {
+        if j < self.nodes.len() {
+            self.lemma_get_alt_to_exists_key_helper(key, j + 1);
+        }
+    }
+    
     /// Similar to lemma_get_to_exists_key, but for get_alt
     pub proof fn lemma_get_alt_to_exists_key(self, key: Seq<u8>)
         requires self.wf()
@@ -467,6 +525,7 @@ impl<T> SpecTrieHard<T> {
                     &&& 0 <= i < self.nodes.len()
                     &&& #[trigger] self.get_item(i) matches Some(item)
                     &&& item.key == key
+                    &&& item.value == value
                 },
 
             self.get_alt(key).is_none() ==>
@@ -474,7 +533,7 @@ impl<T> SpecTrieHard<T> {
                     (#[trigger] self.get_item(i) matches Some(item) ==>
                         item.key != key),
     {
-        admit();
+        self.lemma_get_alt_to_exists_key_helper(key, 0);
     }
 
     /// Prove that get_alt is equivalent to get on a well-formed SpecTrieHard
