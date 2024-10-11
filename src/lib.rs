@@ -535,7 +535,7 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
-    // #[verifier::external_body]
+    #[verifier::external_body]
     // #[verifier::loop_isolation(false)]
     #[verifier::spinoff_prover]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
