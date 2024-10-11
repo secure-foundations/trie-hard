@@ -14,6 +14,8 @@ verus! {
  *    - Abstracts away the masks
  */
 
+pub type SpecMap<T> = Map<Seq<u8>, T>;
+
 pub struct SpecChild<T> {
     pub prefix: u8,
     pub node: SpecTrie<T>,
@@ -90,30 +92,29 @@ impl<T> SpecTrie<T> {
         }
     }
 
-    // Currently fails to prove termination
-    pub open spec fn as_map_helper(self, prefix: Seq<u8>) -> Map<Seq<u8>, T>
-        decreases self
-        when self.wf()
-    {
-        match self {
-            SpecTrie::Leaf(key, value) => map![(prefix.add(key)) => value],
-            SpecTrie::Search(value_opt, children) => {
-                let this_elem_map = match value_opt {
-                    Some(value) => map![prefix => value],
-                    None => map![],
-                };
-                children.fold_left(this_elem_map, |acc: Map<Seq<u8>, T>, child: SpecChild<T>| {
-                    acc.union_prefer_right(child.node.as_map_helper(prefix.add(seq![child.prefix])))
-                })
-            }
-        }
-    }
+    // // Currently fails to prove termination
+    // pub open spec fn as_map_helper(self, prefix: Seq<u8>) -> Map<Seq<u8>, T>
+    //     decreases self
+    //     when self.wf()
+    // {
+    //     match self {
+    //         SpecTrie::Leaf(key, value) => map![(prefix.add(key)) => value],
+    //         SpecTrie::Search(value_opt, children) => {
+    //             let this_elem_map = match value_opt {
+    //                 Some(value) => map![prefix => value],
+    //                 None => map![],
+    //             };
+    //             children.fold_left(this_elem_map, |acc: Map<Seq<u8>, T>, child: SpecChild<T>| {
+    //                 acc.union_prefer_right(child.node.as_map_helper(prefix.add(seq![child.prefix])))
+    //             })
+    //         }
+    //     }
+    // }
 
-    pub open spec fn as_map(self) -> Map<Seq<u8>, T>
-    {
-        self.as_map_helper(seq![])
-    }
-
+    // pub open spec fn as_map(self) -> Map<Seq<u8>, T>
+    // {
+    //     self.as_map_helper(seq![])
+    // }
 }
 
 impl<T> SpecTrieHard<T> {
@@ -131,7 +132,7 @@ impl<T> SpecTrieHard<T> {
         when self.wf_acyclic() && 0 <= i < self.nodes.len()
     {
         match self.nodes[i] {
-            SpecTrieState::Leaf(item) => item.key == prefix,
+            SpecTrieState::Leaf(item) => item.key.len() >= prefix.len() && item.key.take(prefix.len() as int) == prefix,
             SpecTrieState::Search(item, children) => {
                 &&& item matches Some(item) ==> item.key == prefix
                 &&& forall |j| #![trigger children[j]]
@@ -142,6 +143,7 @@ impl<T> SpecTrieHard<T> {
         }
     }
     
+    /// Each child's label is unique
     pub open spec fn wf_distinct_children(self) -> bool
     {
         forall |i|
@@ -157,11 +159,39 @@ impl<T> SpecTrieHard<T> {
             }
     }
 
+    /// There is no unreachable node
+    pub open spec fn wf_no_junk(self) -> bool
+    {
+        // For any node, there is a path from the root to that node
+        forall |i: int| #![trigger self.nodes[i]]
+            0 <= i < self.nodes.len() ==>
+            exists |ancestors: Seq<int>| {
+                &&& ancestors.len() > 0
+                &&& #[trigger] ancestors[0] == 0
+                &&& ancestors[ancestors.len() - 1] == i
+                &&& forall |j| #![trigger ancestors[j]]
+                        0 <= j < ancestors.len() - 1 ==>
+                        self.is_parent_of(ancestors[j], ancestors[j + 1])
+            }
+    }
+
     pub open spec fn wf(self) -> bool {
         &&& self.nodes.len() != 0
         &&& self.wf_acyclic()
         &&& self.wf_prefix(seq![], 0)
         &&& self.wf_distinct_children()
+        &&& self.wf_no_junk()
+    }
+
+    /// Check if node j is a child of i
+    pub open spec fn is_parent_of(self, i: int, j: int) -> bool
+    {
+        &&& 0 <= i < self.nodes.len()
+        &&& 0 <= j < self.nodes.len()
+        &&& match self.nodes[i] {
+            SpecTrieState::Search(_, children) => exists |k| 0 <= k < children.len() && (#[trigger] children[k]).idx == j,
+            _ => false,
+        }
     }
 
     /// Check if there is a child with the given prefix
@@ -303,7 +333,11 @@ impl<T> SpecTrieHard<T> {
         match self.nodes[i] {
             SpecTrieState::Leaf(item) => {
                 assert(item.key == key ==> item.key.skip(depth) == key.skip(depth));
-                assert(item.key.skip(depth) == key.skip(depth) ==> item.key == key);
+                assert(self.wf_prefix(key.take(depth), i));
+                assert(item.key.take(depth) == key.take(depth));
+                // assert(item.key.skip(depth) == key.skip(depth) ==> item.key == key);
+                assert(item.key == item.key.take(depth) + item.key.skip(depth));
+                assert(key == key.take(depth) + key.skip(depth));
             },
             SpecTrieState::Search(item, children) => {
                 if key.len() == depth {
@@ -343,6 +377,114 @@ impl<T> SpecTrieHard<T> {
         assert(key.skip(0) == key);
         self.lemma_view_preserves_wf();
         self.lemma_view_preserves_get_helper(key, 0, 0);
+    }
+
+
+    /// Helper for get_alt that starts from node i
+    pub open spec fn get_alt_helper(self, key: Seq<u8>, i: int) -> Option<T>
+        decreases self.nodes.len() - i
+    {
+        if i >= self.nodes.len() {
+            None
+        } else {
+            match self.nodes[i] {
+                SpecTrieState::Leaf(item) => {
+                    if item.key == key {
+                        Some(item.value)
+                    } else {
+                        self.get_alt_helper(key, i + 1)
+                    }
+                }
+                SpecTrieState::Search(item, children) => {
+                    if let Some(item) = item {
+                        if item.key == key {
+                            Some(item.value)
+                        } else {
+                            self.get_alt_helper(key, i + 1)
+                        }
+                    } else {
+                        self.get_alt_helper(key, i + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /// An alternative get function that simply scans self.nodes to find the key
+    pub open spec fn get_alt(self, key: Seq<u8>) -> Option<T>
+    {
+        self.get_alt_helper(key, 0)
+    }
+
+    pub open spec fn get_item(self, i: int) -> Option<SpecItem<T>>
+    {
+        match self.nodes[i] {
+            SpecTrieState::Leaf(item) => Some(item),
+            SpecTrieState::Search(item, ..) => item,
+        }
+    }
+
+    /// Prove that for a well-formed SpecTrieHard, keys stored in nodes are unique
+    pub proof fn lemma_wf_implies_unique_keys(self)
+        requires self.wf()
+        ensures
+            forall |i: int, j: int|
+                0 <= i < self.nodes.len() && 0 <= j < self.nodes.len() ==>
+                match (#[trigger] self.get_item(i), #[trigger] self.get_item(j)) {
+                    (Some(item1), Some(item2)) => item1.key != item2.key,
+                    _ => true,
+                }
+    {
+        admit();
+    }
+
+    /// Prove that get(k) is some iff there is some node with key k, and the value is the same
+    /// as the value stored at that node
+    pub proof fn lemma_get_to_exists_key(self, key: Seq<u8>)
+        requires self.wf()
+        ensures
+            self.get(key) matches Some(value) ==>
+                exists |i| {
+                    &&& 0 <= i < self.nodes.len()
+                    &&& #[trigger] self.get_item(i) matches Some(item)
+                    &&& item.key == key
+                },
+
+            self.get(key).is_none() ==>
+                forall |i| 0 <= i < self.nodes.len() ==>
+                    (#[trigger] self.get_item(i) matches Some(item) ==>
+                        item.key != key),
+    {
+        admit();
+    }
+
+    /// Similar to lemma_get_to_exists_key, but for get_alt
+    pub proof fn lemma_get_alt_to_exists_key(self, key: Seq<u8>)
+        requires self.wf()
+        ensures
+            self.get_alt(key) matches Some(value) ==>
+                exists |i| {
+                    &&& 0 <= i < self.nodes.len()
+                    &&& #[trigger] self.get_item(i) matches Some(item)
+                    &&& item.key == key
+                },
+
+            self.get_alt(key).is_none() ==>
+                forall |i| 0 <= i < self.nodes.len() ==>
+                    (#[trigger] self.get_item(i) matches Some(item) ==>
+                        item.key != key),
+    {
+        admit();
+    }
+
+    /// Prove that get_alt is equivalent to get on a well-formed SpecTrieHard
+    pub proof fn lemma_get_alt_equiv_get(self, key: Seq<u8>)
+        requires self.wf()
+        ensures self.get_alt(key) == self.get(key)
+    {
+        self.lemma_get_to_exists_key(key);
+        self.lemma_get_alt_to_exists_key(key);
+        self.lemma_wf_implies_unique_keys();
     }
 }
 
