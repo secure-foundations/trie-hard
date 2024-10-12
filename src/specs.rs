@@ -479,73 +479,6 @@ impl<T> SpecTrieHard<T> {
         }
     }
 
-    // /// For any j reachable from i, if j has a key, then get_prefix_for_path(path) is a prefix of j
-    // pub proof fn lemma_path_prefix_is_key_helper(self, path1: Seq<int>, i: int, path2: Seq<int>, j: int)
-    //     requires
-    //         self.wf(),
-    //         self.is_path(path1, 0, i),
-    //         self.is_path(path2, i, j),
-
-    //     ensures
-    //         self.wf_prefix(self.get_prefix_for_path(path1), i),
-    //         // self.get_item(j) matches Some(item) ==> Self::is_prefix_of(self.get_prefix_for_path(path1), item.key),
-
-    //     decreases path1.len()
-    // {
-    //     if path1.len() > 1 {
-    //         let snd_last = path1[path1.len() - 2];
-    //         self.lemma_path_prefix_is_key_helper(path1.drop_last(), snd_last, seq![snd_last] + path2, j);
-
-    //         admit();
-
-    //         // // Label from snd_last to i
-    //         // let label = self.is_parent_of(snd_last, i).unwrap();
-
-    //         // if i != j {
-    //         //     if let Some(item) = self.get_item(j) {
-    //         //         let snd_last_node = self.nodes[snd_last];
-    //         //         let snd_last_children = snd_last_node->Search_1;
-
-    //         //         assert(Self::is_prefix_of(self.get_prefix_for_path(path1.drop_last()), item.key));
-    //         //         assert(self.wf_prefix(self.get_prefix_for_path(path1.drop_last()), snd_last));
-    //         //         // &&& item matches Some(item) ==> item.key == prefix
-    //         //         // &&& forall |j| #![trigger children[j]]
-    //         //         //     0 <= j < children.len() ==>
-    //         //         //     // Append one byte to the prefix
-    //         //         //     self.wf_prefix(prefix + seq![children[j].prefix], children[j].idx)
-                    
-    //         //         assert(exists |i_idx| 0 <= i_idx < snd_last_children.len() && (#[trigger] snd_last_children[i_idx]).idx == i);
-                    
-    //         //         // Index of i in the children of j
-    //         //         let i_idx = choose |i_idx| 0 <= i_idx < snd_last_children.len() && (#[trigger] snd_last_children[i_idx]).idx == i;
-
-    //         //         assert(self.get_prefix_for_path(path1) == self.get_prefix_for_path(path1.drop_last()) + seq![label]);
-    //         //         assert(self.wf_prefix(self.get_prefix_for_path(path1), i));
-                    
-    //         //         admit();
-    //         //     }
-    //         // }
-    //     }
-    // }
-
-    // /// For any node i, if path is a path from root to i,
-    // /// then get_prefix_for_path(path) is the same as the key at i
-    // /// if the key exists
-    // pub proof fn lemma_path_prefix_is_key(self, path: Seq<int>, i: int)
-    //     requires self.wf() && self.is_path(path, 0, i)
-    //     ensures
-    //         self.wf_prefix(self.get_prefix_for_path(path), i)
-        
-    //     decreases path.len()
-    //         // self.get_item(i) matches Some(item) ==> Self::is_prefix_of(self.get_prefix_for_path(path), item.key)
-    // {
-    //     // self.lemma_path_prefix_is_key_helper(path, i, seq![i], i);
-    //     if path.len() > 1 {
-    //         let snd_last = path[path.len() - 2];
-    //         self.lemma_path_prefix_is_key(path.drop_last(), snd_last);
-    //     }
-    // }
-
     pub proof fn lemma_get_prefix_len(self, path: Seq<int>)
         requires
             self.wf(),
@@ -590,31 +523,6 @@ impl<T> SpecTrieHard<T> {
             let snd_last = path[path.len() - 2];
             self.lemma_path_to_wf_prefix(path.drop_last(), snd_last);
         }
-    }
-
-    pub proof fn lemma_diff_path_prefix(self, path1: Seq<int>, path2: Seq<int>)
-        requires
-            self.wf(),
-            self.is_path(path1, 0, path1.last()),
-            self.is_path(path2, 0, path2.last()),
-            path1 != path2,
-
-        ensures
-            self.get_prefix_for_path(path1) != self.get_prefix_for_path(path2)
-    {
-        let diff = diff_seq(path1, path2);
-        lemma_diff_seq(path1, path2);
-
-        self.lemma_get_prefix_len(path1);
-        self.lemma_get_prefix_len(path2);
-
-        // if diff < path1.len() && diff < path2.len() {
-        //     admit();
-        // }
-        // self.lemma_get_prefix_alt(path1, diff - 1);
-        // self.lemma_get_prefix_alt(path2, diff - 1);
-
-        admit();
     }
 
     /// Similar as get_helper, but instead return the path (from i) to the node with the given key
@@ -703,35 +611,26 @@ impl<T> SpecTrieHard<T> {
             // wf implies there are paths from root to i and j
             let _ = self.nodes[i];
             let _ = self.nodes[j];
-            assert(exists |ancestors: Seq<int>| self.is_path(ancestors, 0, i));
-            assert(exists |ancestors: Seq<int>| self.is_path(ancestors, 0, j));
 
             let path_i = choose |ancestors: Seq<int>| self.is_path(ancestors, 0, i);
             let path_j = choose |ancestors: Seq<int>| self.is_path(ancestors, 0, j);
-        
-            // path_i must be different from path_j, since i != j
+            self.lemma_get_prefix_len(path_i);
+            self.lemma_get_prefix_len(path_j);
+
             self.lemma_path_to_wf_prefix(path_i, i);
             self.lemma_path_to_wf_prefix(path_j, j);
-
-            // let path_i_prefix = self.get_prefix_for_path(path_i);
-            // let path_j_prefix = self.get_prefix_for_path(path_j);
 
             let path_i_prefix = self.get_prefix_for_path(path_i);
             let path_j_prefix = self.get_prefix_for_path(path_j);
 
-            match (self.nodes[i], self.nodes[j]) {
-                // If both are leaf nodes, then there it's not possible that
-                // path_i is a prefix or path_j or vice versa.
-                // So there must be a index where two paths differ, and that
-                // causes the prefix to differ
-                (SpecTrieState::Leaf(item1), SpecTrieState::Leaf(item2)) => {
-                    assert(!is_prefix_of(path_i, path_j));
-                    assert(!is_prefix_of(path_j, path_i));
+            // Suppose they contains key-value pairs
+            if let (Some(item1), Some(item2)) = (self.get_item(i), self.get_item(j)) {
+                let diff = diff_seq(path_i, path_j);
+                lemma_diff_seq(path_i, path_j);
 
-                    // Exists an index where the two paths differ
-                    let diff = diff_seq(path_i, path_j);
-                    lemma_diff_seq(path_i, path_j);
-                    
+                // If there exists a valid index where path_i and path_j differ
+                // then their corresponding prefix must differ
+                if diff < path_i.len() && diff < path_j.len() {
                     assert(path_i.take(diff) =~= path_j.take(diff));
                     assert(path_i[diff] != path_j[diff]);
                     assert(diff >= 1);
@@ -742,21 +641,18 @@ impl<T> SpecTrieHard<T> {
 
                     self.lemma_get_prefix_alt(path_i, diff - 1);
                     self.lemma_get_prefix_alt(path_j, diff - 1);
-                    self.lemma_get_prefix_len(path_i);
-                    self.lemma_get_prefix_len(path_j);
                     
                     assert(path_i_prefix[diff - 1] != path_j_prefix[diff - 1]);
-                },
-
-                // If both are search nodes, then their keys are equal to the path labels
-                // which are different. So their keys are different.
-                (SpecTrieState::Search(Some(item1), ..), SpecTrieState::Search(Some(item2), ..)) => {
-                    self.lemma_diff_path_prefix(path_i, path_j);
-                },
-
-                _ => {
-                    admit();
-                },
+                
+                // Otherwise one is a prefix of another, in which case
+                // the key length should be different
+                } else if diff == path_i.len() {
+                    assert(is_prefix_of(path_i, path_j));
+                    assert(item1.key.len() < item2.key.len());
+                } else if diff == path_j.len() {
+                    assert(is_prefix_of(path_j, path_i));
+                    assert(item2.key.len() < item1.key.len());
+                }
             }
         }
     }
