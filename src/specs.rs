@@ -622,39 +622,29 @@ impl<T> SpecTrieHard<T> {
         }
     }
 
-    /// If get_helper succeeds, we have a path from i to the found node
-    pub proof fn lemma_get_helper_implies_path(self, key: Seq<u8>, depth: int, i: int, root_path: Seq<int>)
+    /// If get_helper succeeds, we have a path from i to a node
+    /// with the given key
+    pub proof fn lemma_get_helper_success_implies_path(self, key: Seq<u8>, depth: int, i: int)
         requires
             self.wf(),
             0 <= depth <= key.len(),
             0 <= i < self.nodes.len(),
 
-            self.is_path(root_path, 0, i),
-            root_path.len() == depth + 1,
-
             self.wf_prefix(key.take(depth), i),
+            self.get_helper(key, depth, i).is_some(),
 
         ensures
-            // If self.get_helper succeeds, then there is a path
-            // from i to a node with the given key
-            self.get_helper(key, depth, i) matches Some(value) ==>
-                exists |j: int| {
-                    &&& #[trigger] self.get_item(j) matches Some(item)
-                    &&& item.key == key
-                    &&& item.value == value
-                    &&& exists |path: Seq<int>| self.is_path(path, i, j)
-                },
-
-            // If self.get_helper fails, then for any node reachable from i,
-            // the key is different
-            self.get_helper(key, depth, i).is_none() ==>
-                forall |j: int| #![trigger self.nodes[j]]
-                    0 <= j < self.nodes.len() ==>
-                    (exists |path| self.is_path(path, i, j)) ==>
-                    (self.get_item(j) matches Some(item) ==> item.key != key),
+            exists |j: int| {
+                &&& (#[trigger] self.get_item(j)) matches Some(item)
+                &&& item.key == key
+                &&& item.value == self.get_helper(key, depth, i).unwrap()
+                &&& exists |path: Seq<int>| #[trigger] self.is_path(path, i, j)
+            },
         
         decreases self.nodes.len() - i
     {
+        let value = self.get_helper(key, depth, i).unwrap();
+
         match self.nodes[i] {
             SpecTrieState::Leaf(item) => {
                 let path = seq![i];
@@ -665,114 +655,119 @@ impl<T> SpecTrieHard<T> {
             SpecTrieState::Search(item, children) => {        
                 if key.len() == depth {
                     let path = seq![i];
-                    let _ = self.get_item(i);
+                    
+                    assert(self.get_item(i).is_some());
                     assert(self.is_path(path, i, i));
 
-                    assert(self.get_helper(key, depth, i) matches Some(value) ==>
-                        exists |j: int| {
-                            &&& #[trigger] self.get_item(j) matches Some(item)
-                            &&& item.key == key
-                            &&& item.value == value
-                            &&& exists |path: Seq<int>| self.is_path(path, i, j)
-                        });
-
-                    // Show that if the result is none, we don't have any path
-                    // from i to any node with the given key
-                    if self.get_helper(key, depth, i).is_none() {
-                        assert forall |j: int| #![trigger self.nodes[j]]
-                            0 <= j < self.nodes.len() &&
-                            (exists |path| self.is_path(path, i, j)) implies
-                            (self.get_item(j) matches Some(item) ==> item.key != key)
-                        by {
-                            let path = choose |path| self.is_path(path, i, j);
-                            
-                            if let Some(item) = self.get_item(j) {
-                                self.lemma_wf_prefix_implies_reachable_prefix(key.take(depth), i, path, j);
-                                assert(is_prefix_of(key.take(depth), item.key));
-
-                                if i != j {
-                                    assert(self.is_path(root_path + path.drop_first(), 0, j));
-
-                                    self.lemma_path_to_wf_prefix(root_path + path.drop_first(), j);
-                                    self.lemma_get_prefix_len(root_path + path.drop_first());
-
-                                    // Some reasoning to show that item.key.len() > depth
-                                    assert(path.len() > 1);
-                                    assert((root_path + path.drop_first()).len() - 1 > depth);
-                                    assert(item.key.len() >= (root_path + path.drop_first()).len() - 1);
-                                    assert(item.key.len() > key.len());
-                                }
-                            }
-                        }
-                    }
+                    assert(exists |j: int| {
+                        &&& #[trigger] self.get_item(j) matches Some(item)
+                        &&& item.key == key
+                        &&& item.value == value
+                        &&& exists |path: Seq<int>| self.is_path(path, i, j)
+                    });
                 } else {
                     // depth != key.len(), so there are still some characters to match
 
                     assert(key.take(depth + 1) == key.take(depth) + seq![key[depth]]);
-                    // assert(key.skip(depth).drop_first() == key.skip(depth + 1));
-
-                    Self::lemma_find_children_soundness(key[depth], children);
 
                     // Apply induction if there is a child with label key[depth]
+                    Self::lemma_find_children_soundness(key[depth], children);
                     let next_opt = Self::find_children(key[depth], children);
                     let next = next_opt.unwrap();
                     if next_opt.is_some() {
-                        self.lemma_get_helper_implies_path(key, depth + 1, next, root_path + seq![next]);
+                        self.lemma_get_helper_success_implies_path(key, depth + 1, next);
                     }
 
-                    if let Some(value) = self.get_helper(key, depth, i) {
-                        let end = choose |j: int| {
-                            &&& #[trigger] self.get_item(j) matches Some(item)
-                            &&& item.key == key
-                            &&& item.value == value
-                            &&& exists |path: Seq<int>| self.is_path(path, next, j)
-                        };
+                    // Construct a path from i to j
+                    let end = choose |j: int| {
+                        &&& #[trigger] self.get_item(j) matches Some(item)
+                        &&& item.key == key
+                        &&& item.value == value
+                        &&& exists |path: Seq<int>| self.is_path(path, next, j)
+                    };
 
-                        assert(self.is_parent_of(i, next).is_some());
+                    let path_rest = choose |path| self.is_path(path, next, end);
+                    let path = seq![i] + path_rest;
+                    assert(self.is_path(path, i, end));
+                }
+            }
+        }
+    }
 
-                        let path_rest = choose |path| self.is_path(path, next, end);
-                        let path = seq![i] + path_rest;
+    /// If self.get_helper fails, then for any node reachable from i,
+    /// the key is different
+    pub proof fn lemma_get_helper_fail_implies_no_path(self, key: Seq<u8>, depth: int, i: int, root_path: Seq<int>)
+        requires
+            self.wf(),
+            0 <= depth <= key.len(),
+            0 <= i < self.nodes.len(),
 
-                        assert(self.is_path(path, i, end));
-                        assert(exists |j: int| {
-                            &&& #[trigger] self.get_item(j) matches Some(item)
-                            &&& item.key == key
-                            &&& item.value == value
-                            &&& exists |path: Seq<int>| self.is_path(path, i, j)
-                        });
-                    } else {
-                        // If `get` fails, WTS that any reachable node from i
-                        // has a different key
-                        assert forall |j: int| #![trigger self.nodes[j]]
-                            0 <= j < self.nodes.len() &&
-                            (exists |path| self.is_path(path, i, j)) implies
-                            (self.get_item(j) matches Some(item) ==> item.key != key)
-                        by {
-                            let path = choose |path| self.is_path(path, i, j);
+            self.is_path(root_path, 0, i),
+            root_path.len() == depth + 1,
 
-                            if let Some(item) = self.get_item(j) {
-                                if i != j {
-                                    if next_opt.is_some() && path[1] == next {
-                                        // If there is a children with label key[depth]
-                                        // then we use IH
-                                        assert(self.is_path(path.drop_first(), next, j));
-                                    } else {
-                                        // For other children that is not `next`,
-                                        // the prefix char should be different,
-                                        // so any reachable node from them would have
-                                        // a different key
-                                        let child_idx = choose |child_idx| #![trigger children[child_idx]] {
-                                            &&& 0 <= child_idx < children.len()
-                                            &&& children[child_idx].idx == path[1]
-                                        };
+            self.wf_prefix(key.take(depth), i),
+            self.get_helper(key, depth, i).is_none(),
 
-                                        let next_char = children[child_idx].prefix;
-                                        let wrong_prefix = key.take(depth) + seq![next_char];
+        ensures
+            forall |j: int| #![trigger self.nodes[j]]
+                0 <= j < self.nodes.len() ==>
+                (exists |path| self.is_path(path, i, j)) ==>
+                (self.get_item(j) matches Some(item) ==> item.key != key),
+        
+        decreases self.nodes.len() - i
+    {
+        match self.nodes[i] {
+            SpecTrieState::Leaf(item) => {}
+            SpecTrieState::Search(item, children) => {
+                assert forall |j: int| #![trigger self.nodes[j]]
+                        0 <= j < self.nodes.len() &&
+                        (exists |path| self.is_path(path, i, j)) &&
+                        i != j implies
+                        (self.get_item(j) matches Some(item) ==> item.key != key)
+                by {
+                    let path = choose |path| self.is_path(path, i, j);
+                    
+                    if let Some(item) = self.get_item(j) {
+                        if key.len() == depth {
+                            // This should be the last node to test
+                            assert(item.key != key) by {
+                                self.lemma_wf_prefix_implies_reachable_prefix(key.take(depth), i, path, j);
+                                let root_path_to_j = root_path + path.drop_first();
+                                self.lemma_path_to_wf_prefix(root_path_to_j, j);
+                                self.lemma_get_prefix_len(root_path_to_j);
+                                assert(item.key.len() > key.len());
+                            }
+                        } else {
+                            // depth != key.len(), so there are still some characters to match
+                            assert(key.take(depth + 1) == key.take(depth) + seq![key[depth]]);
 
-                                        self.lemma_wf_prefix_implies_reachable_prefix(wrong_prefix, path[1], path.drop_first(), j);
-                                        assert(is_prefix_of(wrong_prefix, item.key));
-                                        assert(item.key.take(depth + 1)[depth] == item.key[depth]);
-                                    }
+                            Self::lemma_find_children_soundness(key[depth], children);
+                            let next_opt = Self::find_children(key[depth], children);
+                            let next = next_opt.unwrap();
+                            
+                            if next_opt.is_some() && path[1] == next {
+                                // Apply induction if there is a child with label key[depth]
+                                assert(item.key != key) by {
+                                    self.lemma_get_helper_fail_implies_no_path(key, depth + 1, next, root_path + seq![next]);
+                                    assert(self.is_path(path.drop_first(), next, j));
+                                }
+                            } else {
+                                // For other children that is not `next`,
+                                // the prefix char should be different,
+                                // so any reachable node from them would have
+                                // a different key
+                                assert(item.key != key) by {
+                                    let child_idx = choose |child_idx| #![trigger children[child_idx]] {
+                                        &&& 0 <= child_idx < children.len()
+                                        &&& children[child_idx].idx == path[1]
+                                    };
+
+                                    let next_char = children[child_idx].prefix;
+                                    let wrong_prefix = key.take(depth) + seq![next_char];
+
+                                    self.lemma_wf_prefix_implies_reachable_prefix(wrong_prefix, path[1], path.drop_first(), j);
+                                    assert(is_prefix_of(wrong_prefix, item.key));
+                                    assert(item.key.take(depth + 1)[depth] == item.key[depth]);
                                 }
                             }
                         }
@@ -870,7 +865,12 @@ impl<T> SpecTrieHard<T> {
         let empty: Seq<u8> = seq![];
         let path = seq![0];
         assert(key.take(0) == empty);
-        self.lemma_get_helper_implies_path(key, 0, 0, path);
+
+        if self.get(key).is_none() {
+            self.lemma_get_helper_fail_implies_no_path(key, 0, 0, path);
+        } else {
+            self.lemma_get_helper_success_implies_path(key, 0, 0);
+        }
     }
 
     /// Helper for lemma_get_alt_to_exists_key
