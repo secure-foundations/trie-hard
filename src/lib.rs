@@ -593,17 +593,13 @@ where
                 }
                 TrieState::Search(search)
                 | TrieState::SearchOrLeaf(_, _, search) => {
-                    let eval = search.evaluate(c, self);
-
                     proof {
-                        if let Some(next_state_index) = eval {
-                            assert(key@.take(i + 1) == key@.take(i as int) + seq![c]);
-                            let children = search.view_with_mask_map(self.masks);
-                            SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
-                        }
+                        assert(key@.take(i + 1) == key@.take(i as int) + seq![c]);
+                        let children = search.view_with_mask_map(self.masks);
+                        SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
                     }
                     
-                    eval
+                    search.evaluate(c, self)
                 }
             };
 
@@ -613,8 +609,6 @@ where
                     state_index = next_state_index as int;
                 };
             } else {
-                // failing return path
-                // assume(false);
                 return None; // the current character `c` doesn't correspond to a child of `state`
             }
 
