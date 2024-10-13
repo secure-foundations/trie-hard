@@ -56,6 +56,10 @@ impl MasksByByteSized<Mask> {
                 0 <= i < j < self.0.len() &&
                 self.0[i] != 0 && self.0[j] != 0
                 ==> self.0[i] < self.0[j]
+
+        // // Each element is has only one bit set
+        // &&& forall |i| 0 <= i < self.0.len()
+        //         ==> (#[trigger] self.0[i]).count_ones() == 1
     }
 }
 }
@@ -499,16 +503,34 @@ impl SearchNode<Mask> {
         //     self.edge_start + index_offset
         // })
 
-        // TODO
-        assume(false);
         let ghost children = self.view(*trie);
 
         if mask_res > 0 {
             let smaller_bits = mask_res - 1;
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
+            
+            // TODO
+            assume(false);
+            
             Some(self.edge_start + index_offset)
         } else {
+            let ghost used_bytes = trie.masks.0@
+                .map(|i, m| (i as u8, m))
+                .filter(|m: (u8, Mask)| 
+                    trie.masks.0@[m.0 as int] == m.1 && // invariant from map
+                    self.mask & m.1 != 0);
+            
+            // Since c_mask is also an element of trie.masks
+            assert(forall |i| #![trigger used_bytes[i]] 0 <= i < used_bytes.len()
+                ==> used_bytes[i].1 & c_mask == 0);
+
+            broadcast use verus_utils::lemma_filter_equiv_pred;
+
+            proof {
+                SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
+            }
+
             None
         }
     }
