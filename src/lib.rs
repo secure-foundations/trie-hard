@@ -40,7 +40,10 @@ verus!{
 #[repr(transparent)]
 struct MasksByByteSized<I>([I; 256]);
 
-impl MasksByByteSized<u8> {
+/// Current mask type to verify
+pub type Mask = u16;
+
+impl MasksByByteSized<Mask> {
     pub closed spec fn wf(self) -> bool {
         // Any two different elements & to 0
         &&& forall |i, j|
@@ -48,9 +51,11 @@ impl MasksByByteSized<u8> {
                 0 <= j < self.0.len() && i != j
                 ==> self.0[i] & self.0[j] == 0
         
-        // Sorted
-        &&& forall |i| 0 <= i < self.0.len() - 1
-                ==> #[trigger] self.0[i] <= self.0[i + 1]
+        // Non-zero elements are sorted
+        &&& forall |i, j| #![trigger self.0[i], self.0[j]]
+                0 <= i < j < self.0.len() &&
+                self.0[i] != 0 && self.0[j] != 0
+                ==> self.0[i] < self.0[j]
     }
 }
 }
@@ -451,45 +456,81 @@ where
 
 verus! {
 
-impl SearchNode<u8> {
+impl SearchNode<Mask> {
+    closed spec fn wf<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> bool {
+        &&& self.edge_start + self.mask.count_ones() < trie.nodes@.len()
+    }
+
+    // /// Given `trie` with a global mask lookup array `trie.masks`
+    // /// and a current mask `mask` (which is a union of a subset of elements in `trie.masks`)
+    // /// show that the impl of `evaluate` is equivalent to look up in SearchNode::view
+    // proof fn lemma_evaluate_helper<T: View>(trie: TrieHardSized<'_, T, Mask>, mask: Mask, c: u8)
+    //     requires
+    //         trie.wf(),
+
+    //     ensures ({
+    //         let mask_res = mask & trie.masks.0@[c as int];
+    //         let smaller_bits = mask_res - 1;
+    //         let smaller_bits_mask = smaller_bits & mask;
+    //         let index_offset = smaller_bits_mask.count_ones();
+
+    //     })
+    // {
+
+    // }
 
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
-    #[verifier::external_body]
-    fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
+    // #[verifier::external_body]
+    fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, Mask>) -> (res: Option<usize>)
         requires 
             trie.wf(),
 
         ensures
-            res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
-            res is None ==> SpecTrieHard::<T::V>::find_children(c, self.view_with_mask_map(trie.masks)) is None
+            res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view(*trie)) == Some(i as int),
+            res is None ==> SpecTrieHard::<T::V>::find_children(c, self.view(*trie)) is None
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
-        (mask_res > 0).then(|| {
+        // (mask_res > 0).then(|| {
+        //     let smaller_bits = mask_res - 1;
+        //     let smaller_bits_mask = smaller_bits & self.mask;
+        //     let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
+        //     self.edge_start + index_offset
+        // })
+
+        // TODO
+        assume(false);
+        let ghost children = self.view(*trie);
+
+        if mask_res > 0 {
             let smaller_bits = mask_res - 1;
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
-            self.edge_start + index_offset
-        })
+            Some(self.edge_start + index_offset)
+        } else {
+            None
+        }
     }
-}
 
-impl SearchNode<u8> {
     /// Get the spec children nodes represented by a SearchNode
-    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<u8>) -> Seq<SpecChildRef>
+    closed spec fn view<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> Seq<SpecChildRef>
     {
-        // Find masks used in self.mask
-        let used_masks = masks.0@.filter(|mask| self.mask & mask != 0);
+        // Find bytes corresponding to the bits set in self.mask
+        // in the order specified in trie.masks
+        let used_bytes = trie.masks.0@
+            .map(|i, m| (i as u8, m))
+            .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
+            .map_values(|m: (u8, Mask)| m.0);
 
-        Seq::new(used_masks.len(), |i| SpecChildRef {
-            label: used_masks[i],
+        Seq::new(used_bytes.len(), |i| SpecChildRef {
+            label: used_bytes[i],
             idx: self.edge_start + i,
         })
     }
 }
 
-impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
+impl<'a, T: View> View for TrieHardSized<'a, T, Mask> {
     type V = SpecTrieHard<T::V>;
 
     /// Lift TrieHardSized to SpecTrieHard
@@ -501,12 +542,12 @@ impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
                         SpecTrieState::Leaf(SpecItem { key: k@, value: v@ }),
 
                     TrieState::Search(search) =>
-                        SpecTrieState::Search(None, search.view_with_mask_map(self.masks)),
+                        SpecTrieState::Search(None, search.view(*self)),
 
                     TrieState::SearchOrLeaf(k, v, search) =>
                         SpecTrieState::Search(
                             Some(SpecItem { key: k@, value: v@ }),
-                            search.view_with_mask_map(self.masks),
+                            search.view(*self),
                         ),
                 }
             }),
@@ -514,16 +555,22 @@ impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
     }
 }
 
-impl<'a, T: View> TrieHardSized<'a, T, u8>
+impl<'a, T: View> TrieHardSized<'a, T, Mask>
 {
     /// Invariants of TrieHardSized
     pub closed spec fn wf(self) -> bool {
         &&& self.masks.wf()
         &&& self@.wf() || self@.nodes.len() == 0
+        &&& forall |i| 0 <= i < self.nodes@.len()
+                ==> match #[trigger] self.nodes@[i] {
+                    TrieState::Search(search) => search.wf(self),
+                    TrieState::SearchOrLeaf(_, _, search) => search.wf(self),
+                    _ => true,
+                }
     }
 }
 
-impl<'a, T> TrieHardSized<'a, T, u8>
+impl<'a, T> TrieHardSized<'a, T, Mask>
 where
     T: Copy + View
 {   
@@ -602,7 +649,7 @@ where
                 | TrieState::SearchOrLeaf(_, _, search) => {
                     proof {
                         assert(key@.take(i + 1) == key@.take(i as int) + seq![c]);
-                        let children = search.view_with_mask_map(self.masks);
+                        let children = search.view(*self);
                         SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
                     }
                     
@@ -643,7 +690,7 @@ where
 }   
 }
 
-impl<'a, T> TrieHardSized<'a, T, u8>
+impl<'a, T> TrieHardSized<'a, T, Mask>
 where
     T: Copy + View
 {
@@ -686,7 +733,7 @@ where
     ///     ["and", "ant", "dad", "do", "dot"]
     /// );
     /// ```
-    pub fn iter(&self) -> TrieIterSized<'_, 'a, T, u8> {
+    pub fn iter(&self) -> TrieIterSized<'_, 'a, T, Mask> {
         TrieIterSized {
             stack: vec![TrieNodeIter::default()],
             trie: self
@@ -712,7 +759,7 @@ where
     ///     ["dad", "do", "dot"]
     /// );
     /// ```
-    pub fn prefix_search<K: AsRef<[u8]>>(&self, prefix: K) -> TrieIterSized<'_, 'a, T, u8> {
+    pub fn prefix_search<K: AsRef<[u8]>>(&self, prefix: K) -> TrieIterSized<'_, 'a, T, Mask> {
         let key = prefix.as_ref();
         let mut node_index = 0;
         let Some(mut state) = self.nodes.get(node_index) else {
@@ -748,8 +795,8 @@ where
 
 
 
-impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy + View {
-    fn new(masks: MasksByByteSized<u8>, values: Vec<(&'a [u8], T)>) -> Self {
+impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
+    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> Self {
         let values = values.into_iter().collect::<Vec<_>>();
         let sorted = values
             .iter()
@@ -770,7 +817,7 @@ impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy + View {
 
         while let Some(spec) = spec_queue.pop_front() {
             debug_assert_eq!(spec.index, nodes.len());
-            let (state, next_specs) = TrieState::<'_, _, u8>::new(
+            let (state, next_specs) = TrieState::<'_, _, Mask>::new(
                 spec,
                 next_index,
                 &masks.0,
@@ -790,11 +837,11 @@ impl<'a, T> TrieHardSized<'a, T, u8> where T: 'a + Copy + View {
 }
 
 
-impl <'a, T> TrieState<'a, T, u8> where T: 'a + Copy + View {
+impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
     fn new(
         spec: StateSpec<'a>,
         edge_start: usize,
-        byte_masks: &[u8; 256],
+        byte_masks: &[Mask; 256],
         sorted: &BTreeMap<&'a [u8], T>,
     ) -> (Self, Vec<StateSpec<'a>>) {
         let StateSpec { prefix, .. } = spec;
@@ -878,7 +925,7 @@ impl <'a, T> TrieState<'a, T, u8> where T: 'a + Copy + View {
     }
 }
 
-impl MasksByByteSized<u8> {
+impl MasksByByteSized<Mask> {
     fn new(used_bytes: BTreeSet<u8>) -> Self {
         let mut mask = Default::default();
         mask += 1;
@@ -895,7 +942,7 @@ impl MasksByByteSized<u8> {
     }
 }
 
-impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, u8>
+impl <'b, 'a, T> Iterator for TrieIterSized<'b, 'a, T, Mask>
 where
     T: Copy + View
 {
@@ -1346,7 +1393,7 @@ macro_rules! trie_impls {
 }
 
 // impl for u8 manually macro-expanded above
-trie_impls! {/* u8, */ u16, u32, u64, u128, U256}
+trie_impls! {u8, /*u16,*/ u32, u64, u128, U256}
 
 #[cfg(test)]
 mod tests {
