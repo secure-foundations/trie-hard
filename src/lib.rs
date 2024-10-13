@@ -600,48 +600,6 @@ where
                             assert(key@.take(i + 1) == key@.take(i as int) + seq![c]);
                             let children = search.view_with_mask_map(self.masks);
                             SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
-
-                            // let child_idx = choose |child_idx| #![trigger children[child_idx]] {
-                            //     &&& 0 <= child_idx < children.len()
-                            //     &&& children[child_idx].prefix == c
-                            //     &&& children[child_idx].idx == next_state_index as int
-                            // };
-
-                            // assert(self@.nodes[state_index]->Search_1 == children);
-                            // assert(key@.len() != i as int);
-                            // assert(self@.nodes[state_index] is Search);
-                            // assert(next_state_index as int == SpecTrieHard::<T::V>::find_children(c, children).unwrap());
-                            // assert(0 <= i as int <= key.len());
-                            // assert(0 <= state_index < self@.nodes.len());
-
-                            // assert(self@.wf());
-
-                            // assert(key@[i as int] == c);
-
-                            // assert(self@.wf_prefix(key@.take(i + 1), next_state_index as int));
-                            // assert(state_index < next_state_index < self.nodes@.len());
-                            // assert(i + 1 <= usize::MAX);
-
-                            // assert(self@.get_helper(key@, i as int, state_index) == {
-                            //     if key@.len() == i as int {
-                            //         match self@.nodes[state_index] {
-                            //             SpecTrieState::Search(Some(item), ..) => Some(item.value),
-                            //             _ => None,
-                            //         }
-                            //     } else {
-                            //         if let Some(next) = SpecTrieHard::<T::V>::find_children(key@[i as int], children) {
-                            //             if i < next < self@.nodes.len() {
-                            //                 self@.get_helper(key@, (i as int) + 1, next)
-                            //             } else {
-                            //                 // Should not be reachable if self.wf()
-                            //                 None
-                            //             }
-                            //         } else {
-                            //             None
-                            //         }
-                            //     }
-                            // });
-                            // assert(self@.get_helper(key@, i as int, state_index) == self@.get_helper(key@, i + 1, next_state_index as int));
                         }
                     }
                     
@@ -670,7 +628,9 @@ where
             // (k.len() == key.len()).then_some(*value)
             if k.len() == key.len() {
                 // failing return path
-                assume(false);
+                assert(key@.take(key@.len() as int) == key@);
+                assert(self@.wf_prefix(key@, state_index));
+                assert(k@ =~= key@);
                 Some(*value)
             } else {
                 None
