@@ -39,6 +39,10 @@ use specs::*;
 use u256::U256;
 
 verus!{
+/// Invariants:
+/// 1. Elements are sorted
+/// 2. The non-zero part forms an injection from u8 -> I
+/// 3. Any two different elements & to 0
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 struct MasksByByteSized<I>([I; 256]);
@@ -464,10 +468,19 @@ impl SearchNode<u8> {
     }
 }
 
-impl<I> SearchNode<I> {
+impl SearchNode<u8> {
     /// Get the spec children nodes represented by a SearchNode
     /// TODO: verify
-    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<SpecChildRef>;
+    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<u8>) -> Seq<SpecChildRef>
+    {
+        // Find masks used in self.mask
+        let used_masks = masks.0@.filter(|mask| self.mask & mask != 0);
+
+        Seq::new(used_masks.len(), |i| SpecChildRef {
+            label: used_masks[i],
+            idx: self.edge_start + i,
+        })
+    }
 }
 
 impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
@@ -539,7 +552,6 @@ where
     /// ```
     // #[verifier::external_body]
     // #[verifier::loop_isolation(false)]
-    #[verifier::spinoff_prover]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
         requires self@.wf() || self@.nodes.len() == 0,
         ensures res matches Some(v) ==> self@.get(key@) matches Some(v_spec) && v@ == v_spec,

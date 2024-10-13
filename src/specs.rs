@@ -17,7 +17,7 @@ verus! {
 pub type SpecMap<T> = Map<Seq<u8>, T>;
 
 pub struct SpecChild<T> {
-    pub prefix: u8,
+    pub label: u8,
     pub node: SpecTrie<T>,
 }
 
@@ -32,7 +32,7 @@ pub struct SpecItem<T> {
 }
 
 pub struct SpecChildRef {
-    pub prefix: u8,
+    pub label: u8,
     pub idx: int,
 }
 
@@ -56,7 +56,7 @@ impl<T> SpecTrie<T> {
                 // Children have distinct prefixes
                 &&& forall |i, j| #![auto]
                         0 <= i < children.len() && 0 <= j < children.len() && i != j ==>
-                        children[i].prefix != children[j].prefix
+                        children[i].label != children[j].label
 
                 // Children are well-formed
                 &&& forall |i| 0 <= i < children.len() ==> (#[trigger] children[i].node).wf()
@@ -81,8 +81,8 @@ impl<T> SpecTrie<T> {
                 if key.len() == 0 {
                     value
                 } else {
-                    if exists |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].prefix {
-                        let i = choose |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].prefix;
+                    if exists |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].label {
+                        let i = choose |i| 0 <= i < children.len() && key[0] == #[trigger] children[i].label;
                         children[i].node.get(key.drop_first())
                     } else {
                         None
@@ -105,7 +105,7 @@ impl<T> SpecTrie<T> {
     //                 None => map![],
     //             };
     //             children.fold_left(this_elem_map, |acc: Map<Seq<u8>, T>, child: SpecChild<T>| {
-    //                 acc.union_prefer_right(child.node.as_map_helper(prefix.add(seq![child.prefix])))
+    //                 acc.union_prefer_right(child.node.as_map_helper(prefix.add(seq![child.label])))
     //             })
     //         }
     //     }
@@ -162,7 +162,8 @@ impl<T> SpecTrieHard<T> {
         forall |i|
             0 <= i < self.nodes.len() ==>
             (#[trigger] self.nodes[i] matches SpecTrieState::Search(_, children) ==>
-            forall |j| #![trigger children[j].idx] 0 <= j < children.len() ==> i < children[j].idx < self.nodes.len())
+            forall |j| #![trigger children[j].idx]
+                0 <= j < children.len() ==> i < children[j].idx < self.nodes.len())
     }
 
     /// SpecItem.key stored in some node should match the labels from root to that node
@@ -177,7 +178,7 @@ impl<T> SpecTrieHard<T> {
                 &&& forall |j| #![trigger children[j]]
                     0 <= j < children.len() ==>
                     // Append one byte to the prefix
-                    self.wf_prefix(prefix + seq![children[j].prefix], children[j].idx)
+                    self.wf_prefix(prefix + seq![children[j].label], children[j].idx)
             }
         }
     }
@@ -191,9 +192,9 @@ impl<T> SpecTrieHard<T> {
                 SpecTrieState::Leaf(..) => true,
                 SpecTrieState::Search(_, children) => {
                     // Check if all children have distinct prefixes
-                    forall |j, k| #![auto]
+                    forall |j, k| #![trigger children[j], children[k]]
                         0 <= j < children.len() && 0 <= k < children.len() && j != k ==>
-                        children[j].prefix != children[k].prefix
+                        children[j].label != children[k].label
                 }
             }
     }
@@ -215,15 +216,15 @@ impl<T> SpecTrieHard<T> {
         &&& self.wf_no_junk()
     }
 
-    pub open spec fn is_path(self, path: Seq<int>, i: int, j: int) -> bool
+    pub closed spec fn is_path(self, path: Seq<int>, i: int, j: int) -> bool
     {
         &&& path.len() > 0
         &&& path[0] == i
         &&& path.last() == j
         &&& 0 <= i < self.nodes.len()
         &&& 0 <= j < self.nodes.len()
-        &&& forall |k| 0 <= k < path.len() - 1 ==>
-            self.is_parent_of(#[trigger] path[k], path[k + 1]).is_some()
+        &&& forall |k: int, l| 0 <= k < path.len() - 1 && l == k + 1 ==>
+            (#[trigger] self.is_parent_of(path[k], path[l])).is_some()
     }
 
     /// Check if node j is a child of i, and returns the edge label
@@ -234,7 +235,7 @@ impl<T> SpecTrieHard<T> {
                 SpecTrieState::Search(_, children) => {
                     if exists |k| 0 <= k < children.len() && (#[trigger] children[k]).idx == j {
                         let k = choose |k| 0 <= k < children.len() && (#[trigger] children[k]).idx == j;
-                        Some(children[k].prefix)
+                        Some(children[k].label)
                     } else {
                         None
                     }
@@ -254,7 +255,7 @@ impl<T> SpecTrieHard<T> {
         if children.len() <= 0 {
             None
         } else {
-            if children[0].prefix == prefix {
+            if children[0].label == prefix {
                 Some(children[0].idx)
             } else {
                 Self::find_children(prefix, children.drop_first())
@@ -341,21 +342,21 @@ impl<T> SpecTrieHard<T> {
             Self::find_children(prefix, children) matches Some(idx) ==>
                 exists |i| #![trigger children[i]]
                     0 <= i < children.len() &&
-                    children[i].prefix == prefix &&
+                    children[i].label == prefix &&
                     children[i].idx == idx,
 
             Self::find_children(prefix, children).is_none() ==>
-                forall |i| 0 <= i < children.len() ==> (#[trigger] children[i]).prefix != prefix,
+                forall |i| 0 <= i < children.len() ==> (#[trigger] children[i]).label != prefix,
     
         decreases children.len()
     {
         if children.len() > 0 {
             Self::lemma_find_children_soundness(prefix, children.drop_first());
 
-            if children[0].prefix != prefix {
+            if children[0].label != prefix {
                 if Self::find_children(prefix, children).is_none() {
                     assert forall |i| 0 <= i < children.len() implies
-                        (#[trigger] children[i]).prefix != prefix by {
+                        (#[trigger] children[i]).label != prefix by {
                         if i != 0 {
                             assert(children[i] == children.drop_first()[i - 1]);
                         }
@@ -413,7 +414,7 @@ impl<T> SpecTrieHard<T> {
                     // not found in SpecTrie::get
                     assert(exists |i| #![trigger children[i]]
                         0 <= i < children_view.len() &&
-                        children_view[i].prefix == key[depth] &&
+                        children_view[i].label == key[depth] &&
                         children_view[i].node == self.view_helper(depth + 1, next));
                 }
             }
@@ -467,7 +468,8 @@ impl<T> SpecTrieHard<T> {
     }
 
     /// Get the concat of edge labels along a path
-    pub open spec fn get_prefix_for_path(self, path: Seq<int>) -> Seq<u8>
+    #[verifier::opaque]
+    pub closed spec fn get_prefix_for_path(self, path: Seq<int>) -> Seq<u8>
         decreases path.len()
         when self.is_path(path, path.first(), path.last())
     {
@@ -490,7 +492,9 @@ impl<T> SpecTrieHard<T> {
         
         decreases path.len()
     {
+        reveal(SpecTrieHard::<_>::get_prefix_for_path);
         if path.len() > 1 {
+            assert(self.is_parent_of(path[path.len() - 2], path.last()).is_some());
             self.lemma_get_prefix_len(path.drop_last());
         }
     }
@@ -507,6 +511,8 @@ impl<T> SpecTrieHard<T> {
     
         decreases path.len()
     {
+        reveal(SpecTrieHard::<_>::get_prefix_for_path);
+
         self.lemma_get_prefix_len(path);
 
         if i < path.len() - 2 {
@@ -526,8 +532,10 @@ impl<T> SpecTrieHard<T> {
         
         decreases path.len()
     {
+        reveal(SpecTrieHard::<_>::get_prefix_for_path);
         if path.len() > 1 {
             let snd_last = path[path.len() - 2];
+            assert(self.is_parent_of(snd_last, path.last()).is_some());
             self.lemma_path_to_wf_prefix(path.drop_last(), snd_last);
         }
     }
@@ -612,17 +620,14 @@ impl<T> SpecTrieHard<T> {
 
         match self.nodes[i] {
             SpecTrieState::Leaf(item) => {
-                let path = seq![i];
                 let _ = self.get_item(i);
-                assert(self.is_path(path, i, i));
+                assert(self.is_path(seq![i], i, i));
             }
 
             SpecTrieState::Search(item, children) => {        
                 if key.len() == depth {
-                    let path = seq![i];
-                    
                     assert(self.get_item(i).is_some());
-                    assert(self.is_path(path, i, i));
+                    assert(self.is_path(seq![i], i, i));
 
                     assert(exists |j: int| {
                         &&& #[trigger] self.get_item(j) matches Some(item)
@@ -661,7 +666,6 @@ impl<T> SpecTrieHard<T> {
 
     /// If self.get_helper fails, then for any node reachable from i,
     /// the key is different
-    #[verifier::spinoff_prover]
     pub proof fn lemma_get_helper_fail_implies_no_path(self, key: Seq<u8>, depth: int, i: int, root_path: Seq<int>)
         requires
             self.wf(),
@@ -683,20 +687,31 @@ impl<T> SpecTrieHard<T> {
         decreases self.nodes.len() - i
     {
         match self.nodes[i] {
-            SpecTrieState::Leaf(item) => {}
+            SpecTrieState::Leaf(item) => {
+                // Only reachable node from `i` is `i` itself
+                assert forall |j: int| #![trigger self.nodes[j]]
+                    0 <= j < self.nodes.len() &&
+                    (exists |path| self.is_path(path, i, j))
+                    ==> i == j
+                by {
+                    if i != j {
+                        let path = choose |path| self.is_path(path, i, j);
+                        assert(self.is_parent_of(i, path[1]).is_none());
+                    }
+                }
+            }
             SpecTrieState::Search(item, children) => {
                 if key.len() == depth {
                     assert forall |j: int| #![trigger self.nodes[j]]
-                            0 <= j < self.nodes.len() &&
-                            (exists |path| self.is_path(path, i, j)) &&
-                            i != j implies
-                            (self.get_item(j) matches Some(item) ==> item.key != key)
+                        0 <= j < self.nodes.len() &&
+                        (exists |path| self.is_path(path, i, j)) &&
+                        i != j implies
+                        (self.get_item(j) matches Some(item) ==> item.key != key)
                     by {
                         let path = choose |path| self.is_path(path, i, j);
                         
                         if let Some(item) = self.get_item(j) {
                             assert(item.key != key) by {
-                                self.lemma_wf_prefix_implies_reachable_prefix(key.take(depth), i, path, j);
                                 let root_path_to_j = root_path + path.drop_first();
                                 self.lemma_path_to_wf_prefix(root_path_to_j, j);
                                 self.lemma_get_prefix_len(root_path_to_j);
@@ -739,9 +754,10 @@ impl<T> SpecTrieHard<T> {
                                         &&& children[child_idx].idx == path[1]
                                     };
 
-                                    let next_char = children[child_idx].prefix;
+                                    let next_char = children[child_idx].label;
                                     let wrong_prefix = key.take(depth) + seq![next_char];
 
+                                    assert(self.is_parent_of(path[0], path[1]).is_some());
                                     self.lemma_wf_prefix_implies_reachable_prefix(wrong_prefix, path[1], path.drop_first(), j);
                                     assert(is_prefix_of(wrong_prefix, item.key));
                                     assert(item.key.take(depth + 1)[depth] == item.key[depth]);
@@ -921,7 +937,7 @@ impl<T> SpecTrieHard<T> {
                     },
                     // Convert each child
                     Seq::new(children.len(), |j| SpecChild {
-                        prefix: children[j].prefix,
+                        label: children[j].label,
                         node: if 0 <= j < children.len() {
                             self.view_helper(depth + 1, children[j].idx)
                         } else {
@@ -948,7 +964,7 @@ impl<T> SpecTrieHard<T> {
                     },
                     // Convert each child
                     Seq::new(children.len(), |j| SpecChild {
-                        prefix: children[j].prefix,
+                        label: children[j].label,
                         node: if 0 <= j < children.len() {
                             self.view_helper(depth + 1, children[j].idx)
                         } else {
