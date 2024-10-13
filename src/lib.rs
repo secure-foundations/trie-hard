@@ -57,9 +57,9 @@ impl MasksByByteSized<Mask> {
                 self.0[i] != 0 && self.0[j] != 0
                 ==> self.0[i] < self.0[j]
 
-        // // Each element is has only one bit set
-        // &&& forall |i| 0 <= i < self.0.len()
-        //         ==> (#[trigger] self.0[i]).count_ones() == 1
+        // Each element is has only one bit set
+        &&& forall |i| 0 <= i < self.0.len()
+                ==> (#[trigger] self.0[i]).count_ones() == 1
     }
 }
 }
@@ -463,6 +463,7 @@ verus! {
 impl SearchNode<Mask> {
     closed spec fn wf<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> bool {
         &&& self.edge_start + self.mask.count_ones() < trie.nodes@.len()
+        &&& self.edge_start <= usize::MAX - 256
     }
 
     // /// Given `trie` with a global mask lookup array `trie.masks`
@@ -483,12 +484,72 @@ impl SearchNode<Mask> {
 
     // }
 
+    /// Given mask, find the number of 1s below the first 1 in the mask
+    /// e.g. count_ones_below(0b0011, 0b0010) == 1
+    ///      count_ones_below(0b0011, 0b1100) == 2
+    pub open spec fn count_ones_below(i: Mask, mask: Mask) -> u32
+        decreases i
+    {
+        if i == 0 || mask & 1 == 1 {
+            0
+        } else if i & 1 == 1 {
+            (1 + Self::count_ones_below(i / 2, mask / 2)) as u32
+        } else {
+            Self::count_ones_below(i / 2, mask / 2)
+        }
+    }
+
+    /// Self::view(trie) should generate a sequence of children nodes
+    /// with disjoint labels
+    proof fn lemma_wf_search_view_disjointness<T: View>(self, trie: TrieHardSized<'_, T, Mask>)
+        requires
+            trie.wf(),
+            self.wf(trie),
+
+        ensures ({
+            let children = self.view(trie);
+            forall |i, j|
+                #![trigger children[i], children[j]]
+                0 <= i < children.len() && 0 <= j < children.len() && i != j
+                ==> children[i].label != children[j].label
+        })
+    {
+        // TODO
+        admit();
+    }
+
+    /// Bascially the spec for evaluate, but factored out since we might need induction
+    proof fn lemma_search_node_lookup<T: View>(self, trie: TrieHardSized<'_, T, Mask>, c: u8)
+        requires
+            trie.wf(),
+            self.wf(trie),
+
+        ensures ({
+            let c_mask = trie.masks.0@[c as int];
+            let mask_res = self.mask & c_mask;
+            let smaller_bits = (mask_res - 1) as Mask;
+            let smaller_bits_mask = smaller_bits & self.mask;
+            let index_offset = smaller_bits_mask.count_ones() as int;
+
+            let children = self.view(trie);
+
+            mask_res != 0 ==> {
+                &&& 0 <= index_offset < children.len()
+                &&& children[index_offset].label == c
+            }
+        })
+    {
+        // TODO
+        admit();
+    }
+
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
     // #[verifier::external_body]
     fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, Mask>) -> (res: Option<usize>)
         requires 
             trie.wf(),
+            self.wf(*trie),
 
         ensures
             res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view(*trie)) == Some(i as int),
@@ -505,14 +566,29 @@ impl SearchNode<Mask> {
 
         let ghost children = self.view(*trie);
 
+        proof {
+            broadcast use verus_utils::lemma_filter_equiv_pred;
+            SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
+        }
+
         if mask_res > 0 {
             let smaller_bits = mask_res - 1;
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
+
+            // assume(Self::count_ones_below(self.mask, c_mask) == index_offset as u32);
             
-            // TODO
-            assume(false);
-            
+            // TODO: prove these
+            // assume(index_offset < 256);
+            // assume(0 <= index_offset < children.len());
+            // assume(children[index_offset as int].label == c);
+            // assume(children[index_offset as int].idx == self.edge_start + index_offset);
+
+            proof {
+                self.lemma_wf_search_view_disjointness(*trie);
+                self.lemma_search_node_lookup(*trie, c);
+            }
+
             Some(self.edge_start + index_offset)
         } else {
             let ghost used_bytes = trie.masks.0@
@@ -524,12 +600,6 @@ impl SearchNode<Mask> {
             // Since c_mask is also an element of trie.masks
             assert(forall |i| #![trigger used_bytes[i]] 0 <= i < used_bytes.len()
                 ==> used_bytes[i].1 & c_mask == 0);
-
-            broadcast use verus_utils::lemma_filter_equiv_pred;
-
-            proof {
-                SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
-            }
 
             None
         }

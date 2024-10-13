@@ -26,24 +26,24 @@ pub proof fn lemma_seq_take_append_skip<T>(s: Seq<T>, n: int)
 pub open spec fn u8_count_ones(i: u8) -> u32
     decreases i
 {
-    // if i == 0 {
-    //     0
-    // } else if i & 1 == 1 {
-    //     (1 + u8_count_ones(i / 2)) as u32
-    // } else {
-    //     u8_count_ones(i / 2)
-    // }
+    if i == 0 {
+        0
+    } else if i & 1 == 1 {
+        (1 + u8_count_ones(i / 2)) as u32
+    } else {
+        u8_count_ones(i / 2)
+    }
 
-    (
-        if i & 0b0000_0001u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0010u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0100u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_1000u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0001_0000u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0010_0000u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0100_0000u8 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b1000_0000u8 != 0 { 1u32 } else { 0u32 }
-    ) as u32
+    // (
+    //     if i & 0b0000_0001u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0010u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0100u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_1000u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0001_0000u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0010_0000u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0100_0000u8 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b1000_0000u8 != 0 { 1u32 } else { 0u32 }
+    // ) as u32
 }
 
 #[verifier::external_fn_specification]
@@ -58,24 +58,32 @@ pub fn ex_u8_count_ones(i: u8) -> (r: u32)
 pub open spec fn u16_count_ones(i: u16) -> u32
     decreases i
 {
-    (
-        if i & 0b0000_0000_0000_0001u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_0000_0010u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_0000_0100u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_0000_1000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_0001_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_0010_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_0100_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0000_1000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0001_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0010_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_0100_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0000_1000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0001_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0010_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b0100_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
-        if i & 0b1000_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 }
-    ) as u32
+    if i == 0 {
+        0
+    } else if i & 1 == 1 {
+        (1 + u16_count_ones(i / 2)) as u32
+    } else {
+        u16_count_ones(i / 2)
+    }
+
+    // (
+    //     if i & 0b0000_0000_0000_0001u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_0000_0010u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_0000_0100u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_0000_1000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_0001_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_0010_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_0100_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0000_1000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0001_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0010_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_0100_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0000_1000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0001_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0010_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b0100_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 } +
+    //     if i & 0b1000_0000_0000_0000u16 != 0 { 1u32 } else { 0u32 }
+    // ) as u32
 }
 
 #[verifier::external_fn_specification]
@@ -87,7 +95,7 @@ pub fn ex_u16_count_ones(i: u16) -> (r: u32)
     i.count_ones()
 }
 
-/// TODO: prove this
+/// TODO: prove this in vstd
 #[verifier::external_body]
 pub broadcast proof fn lemma_filter_equiv_pred<A>(s: Seq<A>, pred1: spec_fn(A) -> bool, pred2: spec_fn(A) -> bool)
     requires forall |i| 0 <= i < s.len() ==> pred1(s[i]) == pred2(s[i])
