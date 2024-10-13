@@ -1,3 +1,5 @@
+#![allow(unreachable_pub)]
+
 // Copyright 2024 Cloudflare, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -448,8 +450,8 @@ impl SearchNode<u8> {
             trie@.wf(),
         ensures 
             res matches Some(i) ==> i < trie.nodes.len(), // needed for get_from_bytes
-            res matches Some(i) ==> SpecTrieHard::<T>::find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
-            res is None ==> SpecTrieHard::<T>::find_children(c, self.view_with_mask_map(trie.masks)) is None
+            res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
+            res is None ==> SpecTrieHard::<T::V>::find_children(c, self.view_with_mask_map(trie.masks)) is None
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
@@ -465,7 +467,7 @@ impl SearchNode<u8> {
 impl<I> SearchNode<I> {
     /// Get the spec children nodes represented by a SearchNode
     /// TODO: verify
-    pub(crate) closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<SpecChildRef>;
+    closed spec fn view_with_mask_map(self, masks: MasksByByteSized<I>) -> Seq<SpecChildRef>;
 }
 
 impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
@@ -498,7 +500,7 @@ where
     T: Copy + View
 {
     #[allow(missing_docs)]
-    pub open spec fn state_matches_view_index(self, state: TrieState<'a, T, u8>, index: int) -> bool {
+    closed spec fn state_matches_view_index(self, state: TrieState<'a, T, u8>, index: int) -> bool {
         &&& 0 <= index < self@.nodes.len() 
         &&& self@.wf()
         &&& match state {
@@ -509,13 +511,13 @@ where
                 },
                 TrieState::Search(search) => {
                     &&& self@.nodes[index] matches SpecTrieState::Search(None, childrefs)
-                    // &&& childrefs == search.view_with_mask_map(self.masks)
+                    &&& childrefs == search.view_with_mask_map(self.masks)
                 },
                 TrieState::SearchOrLeaf(k, v, search) => {
                     &&& self@.nodes[index] matches SpecTrieState::Search(Some(item), childrefs) 
                     &&& item.key == k@ 
                     &&& item.value == v@
-                    // &&& childrefs === search.view_with_mask_map(self.masks)
+                    &&& childrefs === search.view_with_mask_map(self.masks)
                 },
             }
     }
@@ -535,7 +537,7 @@ where
     /// assert!(sized_trie.get_from_bytes(b"do").is_some());
     /// assert!(sized_trie.get_from_bytes(b"don't").is_none());
     /// ```
-    #[verifier::external_body]
+    // #[verifier::external_body]
     // #[verifier::loop_isolation(false)]
     #[verifier::spinoff_prover]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
@@ -558,9 +560,9 @@ where
         while i < key.len() 
             invariant 
                 0 <= i <= key.len(),
-                0 <= state_index < self.nodes.len(),
+                0 <= state_index < self@.nodes.len(),
                 self@.wf(),
-                self.nodes.len() > 0,
+                self@.nodes.len() > 0,
                 self@.wf_acyclic(),
                 self@.wf_prefix(key@.take(i as int), state_index),
                 self@.get(key@) == self@.get_helper(key@, i as int, state_index),
@@ -591,7 +593,59 @@ where
                 }
                 TrieState::Search(search)
                 | TrieState::SearchOrLeaf(_, _, search) => {
-                    search.evaluate(c, self)
+                    let eval = search.evaluate(c, self);
+
+                    proof {
+                        if let Some(next_state_index) = eval {
+                            assert(key@.take(i + 1) == key@.take(i as int) + seq![c]);
+                            let children = search.view_with_mask_map(self.masks);
+                            SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
+
+                            // let child_idx = choose |child_idx| #![trigger children[child_idx]] {
+                            //     &&& 0 <= child_idx < children.len()
+                            //     &&& children[child_idx].prefix == c
+                            //     &&& children[child_idx].idx == next_state_index as int
+                            // };
+
+                            // assert(self@.nodes[state_index]->Search_1 == children);
+                            // assert(key@.len() != i as int);
+                            // assert(self@.nodes[state_index] is Search);
+                            // assert(next_state_index as int == SpecTrieHard::<T::V>::find_children(c, children).unwrap());
+                            // assert(0 <= i as int <= key.len());
+                            // assert(0 <= state_index < self@.nodes.len());
+
+                            // assert(self@.wf());
+
+                            // assert(key@[i as int] == c);
+
+                            // assert(self@.wf_prefix(key@.take(i + 1), next_state_index as int));
+                            // assert(state_index < next_state_index < self.nodes@.len());
+                            // assert(i + 1 <= usize::MAX);
+
+                            // assert(self@.get_helper(key@, i as int, state_index) == {
+                            //     if key@.len() == i as int {
+                            //         match self@.nodes[state_index] {
+                            //             SpecTrieState::Search(Some(item), ..) => Some(item.value),
+                            //             _ => None,
+                            //         }
+                            //     } else {
+                            //         if let Some(next) = SpecTrieHard::<T::V>::find_children(key@[i as int], children) {
+                            //             if i < next < self@.nodes.len() {
+                            //                 self@.get_helper(key@, (i as int) + 1, next)
+                            //             } else {
+                            //                 // Should not be reachable if self.wf()
+                            //                 None
+                            //             }
+                            //         } else {
+                            //             None
+                            //         }
+                            //     }
+                            // });
+                            // assert(self@.get_helper(key@, i as int, state_index) == self@.get_helper(key@, i + 1, next_state_index as int));
+                        }
+                    }
+                    
+                    eval
                 }
             };
 
@@ -616,7 +670,7 @@ where
             // (k.len() == key.len()).then_some(*value)
             if k.len() == key.len() {
                 // failing return path
-                // assume(false);
+                assume(false);
                 Some(*value)
             } else {
                 None

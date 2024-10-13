@@ -1,6 +1,6 @@
 #![allow(unreachable_pub)]
 
-use vstd::{prelude::*, slice::*};
+use vstd::{prelude::*};
 
 verus!{
 

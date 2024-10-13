@@ -123,7 +123,7 @@ pub open spec fn is_prefix_of<S>(s1: Seq<S>, s2: Seq<S>) -> bool {
 
 /// Return the first index which s1 and s2 differ, or min(s1.len(), s2.len())
 pub open spec fn diff_seq<S>(s1: Seq<S>, s2: Seq<S>) -> int
-decreases s1.len()
+    decreases s1.len()
 {
     if s1.len() == 0 || s2.len() == 0 || s1[0] != s2[0] {
         0
@@ -479,6 +479,7 @@ impl<T> SpecTrieHard<T> {
         }
     }
 
+    /// `get_prefix_for_path(path)` should return something of length `path.len() - 1`
     pub proof fn lemma_get_prefix_len(self, path: Seq<int>)
         requires
             self.wf(),
@@ -494,6 +495,7 @@ impl<T> SpecTrieHard<T> {
         }
     }
 
+    /// `get_prefix_for_path(path)[i]` should be the edge label from i to i + 1
     pub proof fn lemma_get_prefix_alt(self, path: Seq<int>, i: int)
         requires
             self.wf(),
@@ -512,6 +514,8 @@ impl<T> SpecTrieHard<T> {
         }
     }
 
+    /// If there is a path from root to i, then i should satisfy wf_prefix(prefix, i)
+    /// where prefix is the path labels from 0 to i
     pub proof fn lemma_path_to_wf_prefix(self, path: Seq<int>, i: int)
         requires
             self.wf(),
@@ -525,45 +529,6 @@ impl<T> SpecTrieHard<T> {
         if path.len() > 1 {
             let snd_last = path[path.len() - 2];
             self.lemma_path_to_wf_prefix(path.drop_last(), snd_last);
-        }
-    }
-
-    /// Similar as get_helper, but instead return the path (from i) to the node with the given key
-    pub open spec fn get_helper_with_path(self, key: Seq<u8>, depth: int, i: int) -> Option<Seq<int>>
-        decreases self.nodes.len() - i
-        when self.wf() && 0 <= depth <= key.len() && 0 <= i < self.nodes.len()
-    {
-        match self.nodes[i] {
-            SpecTrieState::Leaf(item) => {
-                if item.key == key {
-                    Some(seq![i])
-                } else {
-                    None
-                }
-            }
-            SpecTrieState::Search(item, children) => {
-                if key.len() == depth {
-                    match item {
-                        Some(..) => Some(seq![i]),
-                        None => None,
-                    }
-                } else {
-                    // Check if there's any children with prefix key[depth]
-                    if let Some(next) = Self::find_children(key[depth], children) {
-                        if i < next < self.nodes.len() {
-                            match self.get_helper_with_path(key, depth + 1, next) {
-                                Some(path) => Some(seq![i] + path),
-                                None => None,
-                            }
-                        } else {
-                            // Should not be reachable if self.wf()
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
-            }
         }
     }
 
@@ -696,6 +661,7 @@ impl<T> SpecTrieHard<T> {
 
     /// If self.get_helper fails, then for any node reachable from i,
     /// the key is different
+    #[verifier::spinoff_prover]
     pub proof fn lemma_get_helper_fail_implies_no_path(self, key: Seq<u8>, depth: int, i: int, root_path: Seq<int>)
         requires
             self.wf(),
@@ -719,17 +685,16 @@ impl<T> SpecTrieHard<T> {
         match self.nodes[i] {
             SpecTrieState::Leaf(item) => {}
             SpecTrieState::Search(item, children) => {
-                assert forall |j: int| #![trigger self.nodes[j]]
-                        0 <= j < self.nodes.len() &&
-                        (exists |path| self.is_path(path, i, j)) &&
-                        i != j implies
-                        (self.get_item(j) matches Some(item) ==> item.key != key)
-                by {
-                    let path = choose |path| self.is_path(path, i, j);
-                    
-                    if let Some(item) = self.get_item(j) {
-                        if key.len() == depth {
-                            // This should be the last node to test
+                if key.len() == depth {
+                    assert forall |j: int| #![trigger self.nodes[j]]
+                            0 <= j < self.nodes.len() &&
+                            (exists |path| self.is_path(path, i, j)) &&
+                            i != j implies
+                            (self.get_item(j) matches Some(item) ==> item.key != key)
+                    by {
+                        let path = choose |path| self.is_path(path, i, j);
+                        
+                        if let Some(item) = self.get_item(j) {
                             assert(item.key != key) by {
                                 self.lemma_wf_prefix_implies_reachable_prefix(key.take(depth), i, path, j);
                                 let root_path_to_j = root_path + path.drop_first();
@@ -737,14 +702,26 @@ impl<T> SpecTrieHard<T> {
                                 self.lemma_get_prefix_len(root_path_to_j);
                                 assert(item.key.len() > key.len());
                             }
-                        } else {
-                            // depth != key.len(), so there are still some characters to match
-                            assert(key.take(depth + 1) == key.take(depth) + seq![key[depth]]);
+                        }
+                    }
+                } else {
+                    // depth != key.len(), so there are still some characters to match
 
-                            Self::lemma_find_children_soundness(key[depth], children);
-                            let next_opt = Self::find_children(key[depth], children);
-                            let next = next_opt.unwrap();
-                            
+                    assert(key.take(depth + 1) == key.take(depth) + seq![key[depth]]);
+
+                    Self::lemma_find_children_soundness(key[depth], children);
+                    let next_opt = Self::find_children(key[depth], children);
+                    let next = next_opt.unwrap();
+
+                    assert forall |j: int| #![trigger self.nodes[j]]
+                        0 <= j < self.nodes.len() &&
+                        (exists |path| self.is_path(path, i, j)) &&
+                        i != j implies
+                        (self.get_item(j) matches Some(item) ==> item.key != key)
+                    by {
+                        let path = choose |path| self.is_path(path, i, j);
+                        
+                        if let Some(item) = self.get_item(j) {
                             if next_opt.is_some() && path[1] == next {
                                 // Apply induction if there is a child with label key[depth]
                                 assert(item.key != key) by {
