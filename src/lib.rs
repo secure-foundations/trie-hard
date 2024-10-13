@@ -470,7 +470,6 @@ impl SearchNode<u8> {
 
 impl SearchNode<u8> {
     /// Get the spec children nodes represented by a SearchNode
-    /// TODO: verify
     closed spec fn view_with_mask_map(self, masks: MasksByByteSized<u8>) -> Seq<SpecChildRef>
     {
         // Find masks used in self.mask
@@ -512,27 +511,9 @@ impl<'a, T> TrieHardSized<'a, T, u8>
 where
     T: Copy + View
 {
-    #[allow(missing_docs)]
-    closed spec fn state_matches_view_index(self, state: TrieState<'a, T, u8>, index: int) -> bool {
-        &&& 0 <= index < self@.nodes.len() 
-        &&& self@.wf()
-        &&& match state {
-                TrieState::Leaf(k, v) => {
-                    &&& self@.nodes[index] matches SpecTrieState::Leaf(item) 
-                    &&& item.key == k@ 
-                    &&& item.value == v@
-                },
-                TrieState::Search(search) => {
-                    &&& self@.nodes[index] matches SpecTrieState::Search(None, childrefs)
-                    &&& childrefs == search.view_with_mask_map(self.masks)
-                },
-                TrieState::SearchOrLeaf(k, v, search) => {
-                    &&& self@.nodes[index] matches SpecTrieState::Search(Some(item), childrefs) 
-                    &&& item.key == k@ 
-                    &&& item.value == v@
-                    &&& childrefs === search.view_with_mask_map(self.masks)
-                },
-            }
+    /// Some additional invariants on the exec struct
+    pub closed spec fn wf(self) -> bool {
+        self@.wf() || self@.nodes.len() == 0
     }
     
     /// Get the value stored for the given byte-slice key.
@@ -553,32 +534,35 @@ where
     // #[verifier::external_body]
     // #[verifier::loop_isolation(false)]
     pub fn get_from_bytes(&self, key: &[u8]) -> (res: Option<T>)
-        requires self@.wf() || self@.nodes.len() == 0,
-        ensures res matches Some(v) ==> self@.get(key@) matches Some(v_spec) && v@ == v_spec,
-                res is None ==> self@.nodes.len() == 0 || self@.get(key@) is None
+        requires
+            self.wf(),
+
+        ensures
+            res matches Some(v) ==> self@.get(key@) == Some(v@),
+            res is None ==> self@.nodes.len() == 0 || self@.get(key@) is None,
     {
         if self.nodes.len() == 0 {
             return None;
         }
-        assert(self@.wf());
+
         let mut state = &self.nodes[0];
         let ghost mut state_index: int = 0;
-        assert(self@.wf_prefix(seq![], state_index));
 
         // for (i, c) in key.iter().enumerate() {
         let mut i = 0;
         let ghost empty_seq: Seq<u8> = seq![];
         assert(key@.take(i as int) == empty_seq);
+
         while i < key.len() 
             invariant 
                 0 <= i <= key.len(),
                 0 <= state_index < self@.nodes.len(),
-                self@.wf(),
                 self@.nodes.len() > 0,
-                self@.wf_acyclic(),
+                
+                self.wf(),
                 self@.wf_prefix(key@.take(i as int), state_index),
                 self@.get(key@) == self@.get_helper(key@, i as int, state_index),
-                self.state_matches_view_index(*state, state_index),
+                self.nodes@[state_index] == state,
         {
             let c = key[i];
 
@@ -589,7 +573,7 @@ where
                     //     k.len() == key.len()
                     //     && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
                     // ).then_some(*value)
-                    // assert(self@.nodes[state_index] matches SpecTrieState::Leaf(item) && item.key == k@ && item.value == value@);
+                    
                     if k.len() == key.len() && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len())) {
                         assert(k@ =~= key@) by { 
                             assert(k@.skip(i as int) =~= key@.skip(i as int));
@@ -633,7 +617,6 @@ where
         {
             // (k.len() == key.len()).then_some(*value)
             if k.len() == key.len() {
-                // failing return path
                 assert(key@.take(key@.len() as int) == key@);
                 assert(self@.wf_prefix(key@, state_index));
                 assert(k@ =~= key@);
