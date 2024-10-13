@@ -1,5 +1,3 @@
-#![allow(unreachable_pub)]
-
 // Copyright 2024 Cloudflare, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +16,6 @@
 #![deny(
     missing_docs,
     missing_debug_implementations,
-    unreachable_pub,
     rustdoc::broken_intra_doc_links,
     unsafe_code
 )]
@@ -39,13 +36,23 @@ use specs::*;
 use u256::U256;
 
 verus!{
-/// Invariants:
-/// 1. Elements are sorted
-/// 2. The non-zero part forms an injection from u8 -> I
-/// 3. Any two different elements & to 0
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 struct MasksByByteSized<I>([I; 256]);
+
+impl MasksByByteSized<u8> {
+    pub closed spec fn wf(self) -> bool {
+        // Any two different elements & to 0
+        &&& forall |i, j|
+                0 <= i < self.0.len() &&
+                0 <= j < self.0.len() && i != j
+                ==> self.0[i] & self.0[j] == 0
+        
+        // Sorted
+        &&& forall |i| 0 <= i < self.0.len() - 1
+                ==> #[trigger] self.0[i] <= self.0[i + 1]
+    }
+}
 }
 
 impl<I> Default for MasksByByteSized<I>
@@ -451,9 +458,9 @@ impl SearchNode<u8> {
     #[verifier::external_body]
     fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, u8>) -> (res: Option<usize>)
         requires 
-            trie@.wf(),
-        ensures 
-            res matches Some(i) ==> i < trie.nodes.len(), // needed for get_from_bytes
+            trie.wf(),
+
+        ensures
             res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view_with_mask_map(trie.masks)) matches Some(i_spec) && i == i_spec,
             res is None ==> SpecTrieHard::<T::V>::find_children(c, self.view_with_mask_map(trie.masks)) is None
     {
@@ -507,15 +514,19 @@ impl<'a, T: View> View for TrieHardSized<'a, T, u8> {
     }
 }
 
+impl<'a, T: View> TrieHardSized<'a, T, u8>
+{
+    /// Invariants of TrieHardSized
+    pub closed spec fn wf(self) -> bool {
+        &&& self.masks.wf()
+        &&& self@.wf() || self@.nodes.len() == 0
+    }
+}
+
 impl<'a, T> TrieHardSized<'a, T, u8>
 where
     T: Copy + View
-{
-    /// Some additional invariants on the exec struct
-    pub closed spec fn wf(self) -> bool {
-        self@.wf() || self@.nodes.len() == 0
-    }
-    
+{   
     /// Get the value stored for the given byte-slice key.
     /// ```
     /// # use trie_hard::TrieHard;
