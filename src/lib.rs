@@ -922,10 +922,12 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         edge_start: usize,
         byte_masks: &[Mask; 256],
         sorted: &BTreeMap<&'a [u8], T>,
-    ) -> (Self, Vec<StateSpec<'a>>)
+    ) -> (res: (Self, Vec<StateSpec<'a>>))
         requires
             spec.prefix@.len() < usize::MAX,
             edge_start <= usize::MAX - 256,
+        ensures
+            res.1@.len() <= view_btree_map(*sorted).len(),
     {
         let prefix = spec.prefix;
         let prefix_len = prefix.len();
