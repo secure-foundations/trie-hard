@@ -23,6 +23,22 @@ pub proof fn lemma_seq_take_append_skip<T>(s: Seq<T>, n: int)
     ensures s =~= s.take(n).add(s.skip(n))
 {}
 
+#[verifier::external_body]
+pub fn slice_skip<V>(s: &[V], n: usize) -> (res: &[V])
+    requires n <= s@.len()
+    ensures res@ == s@.skip(n as int)
+{
+    &s[n..]
+}
+
+#[verifier::external_body]
+pub fn slice_take<V>(s: &[V], n: usize) -> (res: &[V])
+    requires n <= s@.len()
+    ensures res@ == s@.take(n as int)
+{
+    &s[..n]
+}
+
 pub open spec fn u8_count_ones(i: u8) -> u32
     decreases i
 {

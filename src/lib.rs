@@ -32,6 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
+use verus_utils::slice_take;
 use vstd::{prelude::*, slice::*, assert_seqs_equal};
 use specs::*;
 use btree_map::*;
@@ -929,75 +930,75 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         edge_start: usize,
         byte_masks: &[Mask; 256],
         sorted: &BTreeMap<&'a [u8], T>,
-    ) -> (Self, Vec<StateSpec<'a>>) {
-        let StateSpec { prefix, .. } = spec;
-
+    ) -> (Self, Vec<StateSpec<'a>>)
+        requires
+            spec.prefix@.len() < usize::MAX,
+            edge_start <= usize::MAX - 256,
+    {
+        let prefix = spec.prefix;
         let prefix_len = prefix.len();
         let next_prefix_len = prefix_len + 1;
 
         let mut prefix_match = None;
-        let mut children_seen = 0;
         let mut last_seen = None;
 
-        let next_states_paired = sorted
-            .range(RangeFrom { start: prefix })
-            .take_while(|(key, _)| key.starts_with(prefix))
-            .filter_map(|(key, val)| {
-                children_seen += 1;
-                last_seen = Some((key, *val));
+        let items_with_prefix = find_elements_with_prefix(sorted, prefix);
+        let mut next_states_paired = Vec::new();
 
-                if *key == prefix {
-                    prefix_match = Some((key, *val));
-                    None
-                } else {
-                    // Safety: The byte at prefix_len must exist otherwise we
-                    // would have ended up in the other branch of this statement
-                    let next_c = key.get(prefix_len).unwrap();
-                    let next_prefix = &key[..next_prefix_len];
+        for i in 0..items_with_prefix.len()
+        {
+            let (key, val) = items_with_prefix[i];
 
-                    Some((
-                        *next_c,
-                        StateSpec {
-                            prefix: next_prefix,
-                            index: 0,
-                        },
-                    ))
-                }
-            })
-            .collect::<BTreeMap<_, _>>()
-            .into_iter()
-            .collect::<Vec<_>>();
+            last_seen = Some((key, val));
+
+            if verus_utils::slice_eq(key, prefix) {
+                prefix_match = Some((key, val));
+            } else {
+                // Safety: The byte at prefix_len must exist otherwise we
+                // would have ended up in the other branch of this statement
+                let next_c = key[prefix_len];
+                let next_prefix = slice_take(key, next_prefix_len);
+
+                next_states_paired.push((
+                    next_c,
+                    StateSpec {
+                        prefix: next_prefix,
+                        index: 0,
+                    },
+                ));
+            }
+        }
 
         // Safety: last_seen will be present because we saw at least one
         //         entry must be present for this function to be called
         let (last_k, last_v) = last_seen.unwrap();
 
-        if children_seen == 1 {
+        if items_with_prefix.len() == 1 {
             return (TrieState::Leaf(last_k, last_v), vec![]);
         }
 
         // No next_states means we hit a leaf node
-        if next_states_paired.is_empty() {
+        if next_states_paired.len() == 0 {
             return (TrieState::Leaf(last_k, last_v), vec![], );
         }
 
-        let mut mask = Default::default();
+        let mut mask = 0;
 
         // This logic requires that the next_states_paired is sorted 
         // so that the pairs are stored in sorted order (`edge_start + i`
         // is always the index of the `i`th child of this node)
 
         // Update the index for the next state now that we have ordered by
-        let next_state_specs = next_states_paired
-            .into_iter()
-            .enumerate()
-            .map(|(i, (c, mut next_state))| {
-                let next_node = edge_start + i;
-                next_state.index = next_node;
-                mask |= byte_masks[c as usize];
-                next_state
-            })
-            .collect();
+        let mut next_state_specs = Vec::new();
+
+        for i in 0..next_states_paired.len() {
+            mask |= byte_masks[next_states_paired[i].0 as usize];
+
+            next_state_specs.push(StateSpec {
+                prefix: next_states_paired[i].1.prefix,
+                index: edge_start + i,
+            });
+        }
 
         let search_node = SearchNode { mask, edge_start };
         let state = match prefix_match {
