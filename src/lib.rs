@@ -866,8 +866,12 @@ where
 verus! {
 
 impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
-    #[verifier::external_body]
-    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> Self {
+    // #[verifier::external_body]
+    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> Self 
+        requires
+            masks.wf(),
+            values@.len() < usize::MAX - 256 - 1,
+    {
         // let values = values.into_iter().collect::<Vec<_>>();
         // let sorted = values
         //     .iter()
@@ -875,6 +879,9 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         //     .collect::<BTreeMap<_, _>>();
 
         let sorted = new_btree_map(values);
+        assert(view_btree_map(sorted).len() <= values@.len()) by {
+            lemma_map_from_seq_len(values@);
+        }
 
         let mut nodes = Vec::new();
         let mut next_index = 1;
@@ -888,7 +895,13 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         let mut spec_queue = VecDeque::new();
         spec_queue.push_back(root_state_spec);
 
-        loop {
+        loop 
+            invariant
+                forall |i| 0 <= i < view_vec_deque(spec_queue).len()
+                    ==> (#[trigger] view_vec_deque(spec_queue)[i]).prefix@.len() < usize::MAX,
+                view_btree_map(sorted).len() < usize::MAX - 256 - 1, // needed because of loop isolation
+                0 <= next_index <= view_btree_map(sorted).len() + 1, // because we have an extra root node for the empty string
+        {
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
                 
@@ -927,7 +940,9 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             spec.prefix@.len() < usize::MAX,
             edge_start <= usize::MAX - 256,
         ensures
-            res.1@.len() <= view_btree_map(*sorted).len(),
+            res.1@.len() <= view_btree_map(*sorted).len() - edge_start,
+            forall |i| 0 <= i < res.1@.len()
+                ==> (#[trigger] res.1@[i]).prefix@.len() < usize::MAX,
     {
         let prefix = spec.prefix;
         let prefix_len = prefix.len();
