@@ -578,14 +578,6 @@ impl SearchNode<Mask> {
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
 
-            // assume(Self::count_ones_below(self.mask, c_mask) == index_offset as u32);
-            
-            // TODO: prove these
-            // assume(index_offset < 256);
-            // assume(0 <= index_offset < children.len());
-            // assume(children[index_offset as int].label == c);
-            // assume(children[index_offset as int].idx == self.edge_start + index_offset);
-
             proof {
                 self.lemma_wf_search_view_disjointness(*trie);
                 self.lemma_search_node_lookup(*trie, c);
