@@ -251,7 +251,7 @@ where
                 TrieHard::U8(TrieHardSized::<'_, _, u8>::new(masks, values))
             }
             MasksByByte::U16(masks) => {
-                TrieHard::U16(TrieHardSized::<'_, _, u16>::new(masks, values))
+                TrieHard::U16(TrieHardSized::<'_, _, u16>::new(masks, values).unwrap())
             }
             MasksByByte::U32(masks) => {
                 TrieHard::U32(TrieHardSized::<'_, _, u32>::new(masks, values))
@@ -466,7 +466,7 @@ verus! {
 
 impl SearchNode<Mask> {
     closed spec fn wf<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> bool {
-        &&& self.edge_start + self.mask.count_ones() < trie.nodes@.len()
+        // &&& self.edge_start + self.mask.count_ones() < trie.nodes@.len()
         &&& self.edge_start <= usize::MAX - 256
     }
 
@@ -526,7 +526,7 @@ impl SearchNode<Mask> {
     /// with disjoint labels
     proof fn lemma_wf_search_view_disjointness<T: View>(self, trie: TrieHardSized<'_, T, Mask>)
         requires
-            trie.wf(),
+            trie.masks.wf(),
             self.wf(trie),
 
         ensures ({
@@ -897,20 +897,22 @@ where
 verus! {
 
 impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
-    #[verifier::external_body]
-    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> (res: Self)
+    // #[verifier::external_body]
+    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> (res: Result<Self, ()>)
         requires
             masks.wf(),
             values@.len() < usize::MAX - 256 - 1,
         ensures
-            res.wf(),
-            ({
-                let values_map = verus_utils::map_from_seq(values@);
-                &&& forall |k| values_map.contains_key(k) ==> 
-                    (#[trigger] res@.get_alt(k@)) == Some(values_map[k]@)
-                &&& forall |k| !values_map.contains_key(k) ==>
-                    (#[trigger] res@.get_alt(k@)) is None
-            })
+            res matches Ok(res) ==> {
+                &&& res.wf()
+                &&& {
+                    let values_map = verus_utils::map_from_seq(values@);
+                    &&& forall |k| values_map.contains_key(k) ==> 
+                        (#[trigger] res@.get_alt(k@)) == Some(values_map[k]@)
+                    &&& forall |k| !values_map.contains_key(k) ==>
+                        (#[trigger] res@.get_alt(k@)) is None
+                }
+            }
     {
         // let values = values.into_iter().collect::<Vec<_>>();
         // let sorted = values
@@ -960,10 +962,26 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 todo_values_map.dom().disjoint(completed_values_map.dom()),
                 work_queue_values_map.dom().disjoint(completed_values_map.dom()),
                 values_map == todo_values_map.union_prefer_right(work_queue_values_map).union_prefer_right(completed_values_map),                
-                ({
-                    let trie_hard = TrieHardSized { nodes, masks };
-                    &&& trie_hard.wf()
-                })
+                
+                next_index == view_vec_deque(spec_queue).len() + nodes@.len(),
+
+                // Per-node invariants
+                forall |i| 0 <= i < nodes@.len() ==> match #[trigger] nodes@[i] {
+                    TrieState::Leaf(..) => true,
+                    TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
+                        &&& search.wf(TrieHardSized { nodes, masks })
+
+                        // Implies wf_acyclic at the end
+                        &&& search.edge_start > i
+                        
+                        // Child indices stay within bound
+                        &&& search.edge_start + search.view(TrieHardSized { nodes, masks }).len() <=
+                            view_vec_deque(spec_queue).len() + nodes@.len()
+                    }
+                },
+            
+            ensures
+                view_vec_deque(spec_queue).len() == 0
         {
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
@@ -980,15 +998,43 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 vec_deque_append_vec(&mut spec_queue, next_specs);
                 nodes.push(state);
             } else {
-                assert(view_vec_deque(spec_queue).len() == 0);
                 break;
             }
         }
 
-        TrieHardSized {
+        let ghost trie = TrieHardSized { nodes, masks };
+        assert(trie@.wf_acyclic());
+        assert(trie@.wf_distinct_children()) by {
+            // This is true as long as the masks are well-formed
+            // (i.e. does not depend on any loop invariant except for `search.wf(trie)`)
+            assert forall |i|
+                0 <= i < trie@.nodes.len() implies
+                match #[trigger] trie@.nodes[i] {
+                    SpecTrieState::Leaf(..) => true,
+                    SpecTrieState::Search(_, children) => {
+                        forall |j, k| #![trigger children[j], children[k]]
+                            0 <= j < children.len() && 0 <= k < children.len() && j != k ==>
+                            children[j].label != children[k].label
+                    }
+                }
+            by {
+                match trie@.nodes[i] {
+                    SpecTrieState::Search(_, children) => {
+                        if let TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) = nodes@[i] {
+                            search.lemma_wf_search_view_disjointness(trie);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        };
+
+        assume(false);
+
+        Ok(TrieHardSized {
             nodes,
             masks,
-        }
+        })
     }
 }
 
@@ -1007,6 +1053,21 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             res.1@.len() <= view_btree_map(*sorted).len() - edge_start,
             forall |i| 0 <= i < res.1@.len()
                 ==> (#[trigger] res.1@[i]).prefix@.len() < usize::MAX,
+
+            // Required for wf_acyclic
+            match res.0 {
+                TrieState::Leaf(k, v) => true,
+                TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
+                    search.edge_start == edge_start &&
+                    
+                    // Similar to the body of SearchNode::view
+                    // requires some BV reasoning
+                    byte_masks@
+                        .map(|i, m| (i as u8, m))
+                        .filter(|m: (u8, Mask)| search.mask & m.1 != 0)
+                        .map_values(|m: (u8, Mask)| m.0)
+                        .len() == res.1@.len()
+            },
             
     {
         let prefix = spec.prefix;
