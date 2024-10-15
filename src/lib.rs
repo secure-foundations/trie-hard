@@ -473,17 +473,27 @@ impl SearchNode<Mask> {
     /// Get the spec children nodes represented by a SearchNode
     closed spec fn view<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> Seq<SpecChildRef>
     {
-        // Find bytes corresponding to the bits set in self.mask
-        // in the order specified in trie.masks
-        let used_bytes = trie.masks.0@
+        // let used_bytes = trie.masks.0@
+        //     .map(|i, m| (i as u8, m))
+        //     .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
+        //     .map_values(|m: (u8, Mask)| m.0);
+
+        // Seq::new(used_bytes.len(), |i| SpecChildRef {
+        //     label: used_bytes[i],
+        //     idx: self.edge_start + i,
+        // })
+
+        trie.masks.0@
+            // Find bytes corresponding to the bits set in self.mask
+            // in the order specified in trie.masks
             .map(|i, m| (i as u8, m))
             .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
-            .map_values(|m: (u8, Mask)| m.0);
 
-        Seq::new(used_bytes.len(), |i| SpecChildRef {
-            label: used_bytes[i],
-            idx: self.edge_start + i,
-        })
+            // Map to SpecChildRef's
+            .map(|i, m: (u8, Mask)| SpecChildRef {
+                label: m.0,
+                idx: self.edge_start + i,
+            })
     }
 
     /// Given mask, find the number of 1s below the first 1 in the mask
@@ -508,9 +518,9 @@ impl SearchNode<Mask> {
         ensures 
             ({
                 let s_mfm = s@.map(|i, m| (i as u8, m))
-                            .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
-                            .map_values(|m: (u8, Mask)| m.0);
-                forall |i : int, j : int| 0 <= i < j < s_mfm.len() ==> s_mfm[i] < s_mfm[j]
+                            .filter(|m: (u8, Mask)| self.mask & m.1 != 0);
+                forall |i : int, j : int| 0 <= i < j < s_mfm.len()
+                    ==> (#[trigger] s_mfm[i]).0 < (#[trigger] s_mfm[j]).0
             })
     {
         let s_m = s@.map(|i, m| (i as u8, m));
@@ -979,6 +989,8 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                             view_vec_deque(spec_queue).len() + nodes@.len()
                     }
                 },
+
+                masks.wf(),
             
             ensures
                 view_vec_deque(spec_queue).len() == 0
@@ -986,13 +998,14 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
 
+                // TODO
                 assume(exists |k| #[trigger] view_btree_map(sorted).contains_key(k) && is_prefix_of(spec.prefix@, k@));
                 let (state, next_specs) = TrieState::<'_, _, Mask>::new(
                     spec,
                     next_index,
                     &masks.0,
                     &sorted,
-                );
+                )?;
 
                 next_index += next_specs.len();
                 // spec_queue.extend(next_specs);
@@ -1046,21 +1059,22 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         edge_start: usize,
         byte_masks: &[Mask; 256],
         sorted: &BTreeMap<&'a [u8], T>,
-    ) -> (res: (Self, Vec<StateSpec<'a>>))
+    ) -> (res: Result<(Self, Vec<StateSpec<'a>>), ()>)
         requires
-            spec.prefix@.len() < usize::MAX,
             edge_start <= usize::MAX - 256,
 
             // There must be some elements in the sorted map with the given prefix
             exists |k| #[trigger] view_btree_map(*sorted).contains_key(k) && is_prefix_of(spec.prefix@, k@),
 
-        ensures
-            res.1@.len() <= view_btree_map(*sorted).len() - edge_start,
-            forall |i| 0 <= i < res.1@.len()
-                ==> (#[trigger] res.1@[i]).prefix@.len() < usize::MAX,
+            MasksByByteSized(*byte_masks).wf(),
+
+        ensures res matches Ok((state, next_state_specs)) ==> {
+            &&& next_state_specs@.len() <= view_btree_map(*sorted).len() - edge_start
+            &&& forall |i| 0 <= i < next_state_specs@.len()
+                    ==> (#[trigger] next_state_specs@[i]).prefix@.len() < usize::MAX
 
             // Required for wf_acyclic
-            match res.0 {
+            &&& match state {
                 TrieState::Leaf(k, v) => true,
                 TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
                     search.edge_start == edge_start &&
@@ -1071,19 +1085,24 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                         .map(|i, m| (i as u8, m))
                         .filter(|m: (u8, Mask)| search.mask & m.1 != 0)
                         .map_values(|m: (u8, Mask)| m.0)
-                        .len() == res.1@.len()
-            },
-            
+                        .len() == next_state_specs@.len()
+            }
+        }   
     {
         let prefix = spec.prefix;
         let prefix_len = prefix.len();
+
+        if prefix_len >= usize::MAX - 1 {
+            return Err(());
+        }
+
         let next_prefix_len = prefix_len + 1;
 
         let mut prefix_match = None;
         let mut last_seen = None;
 
         let items_with_prefix = find_elements_with_prefix(sorted, prefix);
-        let mut next_states_paired = BTreeMap::new();
+        let mut next_states_paired: BTreeMap<u8, StateSpec<'_>> = BTreeMap::new();
 
         let items_with_prefix_len = items_with_prefix.len();
         assert(items_with_prefix_len > 0);
@@ -1093,8 +1112,12 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                 forall |j| 0 <= j < items_with_prefix@.len() ==>
                     is_prefix_of(prefix@, (#[trigger] items_with_prefix@[j]).0@),
 
+                forall |k| #[trigger] view_btree_map(next_states_paired).contains_key(k) ==>
+                    view_btree_map(next_states_paired)[k].prefix@.len() < usize::MAX,
+
                 items_with_prefix_len == items_with_prefix@.len(),
                 prefix_len == prefix@.len(),
+                prefix_len < usize::MAX - 1,
                 next_prefix_len == prefix_len + 1,
 
                 i > 0 ==> last_seen is Some,
@@ -1133,14 +1156,16 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         let (last_k, last_v) = last_seen.unwrap();
 
         if items_with_prefix.len() == 1 {
-            assume(false);
-            return (TrieState::Leaf(last_k, last_v), vec![]);
+            // TODO
+            assume(view_btree_map(*sorted).len() >= edge_start);
+            return Ok((TrieState::Leaf(last_k, last_v), vec![]));
         }
 
         // No next_states means we hit a leaf node
         if next_states_paired.len() == 0 {
-            assume(false);
-            return (TrieState::Leaf(last_k, last_v), vec![], );
+            // TODO
+            assume(view_btree_map(*sorted).len() >= edge_start);
+            return Ok((TrieState::Leaf(last_k, last_v), vec![]));
         }
 
         let mut mask = 0;
@@ -1150,20 +1175,96 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         // is always the index of the `i`th child of this node)
 
         // Update the index for the next state now that we have ordered by
-        let mut next_state_specs = Vec::new();
+        let mut next_state_specs: Vec<StateSpec<'_>> = Vec::new();
 
         let next_states_paired_len = next_states_paired.len();
+
+        // mask = 0 ==> all byte_masks & mask == 0
+        assert forall |i| 0 <= i < byte_masks@.len() ==>
+            mask & #[trigger] byte_masks@[i] == 0
+        by {
+            let byte_masks_i = byte_masks@[i];
+            assert(mask == 0 ==> mask & byte_masks_i == 0) by (bit_vector);
+        }
+        broadcast use lemma_filter_false_pred;
 
         for i in 0..next_states_paired_len
             invariant
                 next_states_paired_len == next_states_paired@.len(),
                 next_states_paired_len <= 256,
                 edge_start <= usize::MAX - 256,
+
+                next_state_specs@.len() == i,
+
+                MasksByByteSized(*byte_masks).wf(),
+
+                // The masks collected so far should be equal to i
+                byte_masks@
+                    .map(|i, m| (i as u8, m))
+                    .filter(|m: (u8, Mask)| mask & m.1 != 0)
+                    .map_values(|m: (u8, Mask)| m.0)
+                    .len() == i,
+
+                // Indices of next_states_paired should be sorted
+                forall |j| 0 <= j < next_states_paired@.len() - 1 ==>
+                    (#[trigger] next_states_paired@[j]).0 < next_states_paired@[j + 1].0,
+
+                // All next prefices should have length < usize::MAX
+                forall |j| 0 <= j < next_states_paired@.len() ==>
+                    (#[trigger] next_states_paired@[j]).1.prefix@.len() < usize::MAX,
+
+                forall |j| 0 <= j < next_state_specs@.len() ==>
+                    (#[trigger] next_state_specs@[j]).prefix@.len() < usize::MAX,
         {
-            mask |= byte_masks[next_states_paired[i].0 as usize];
+            let ghost old_mask = mask;
+            let mask_idx = next_states_paired[i].0 as usize;
+            mask |= byte_masks[mask_idx];
+
+            // TODO: add precondition so that this doesn't happen
+            if byte_masks[mask_idx] == 0 {
+                return Err(());
+            }
+
+            // Prove the byte_masks length invariant
+            proof {
+                broadcast use lemma_filter_add_one;
+
+                let old_mask_pred = |m: (u8, Mask)| old_mask & m.1 != 0;
+                let new_mask_pred = |m: (u8, Mask)| mask & m.1 != 0;
+                let byte_masks_pairs = byte_masks@.map(|i, m| (i as u8, m));
+
+                let cur_byte_mask = byte_masks_pairs[mask_idx as int].1;
+
+                // Show that the new mask agrees with the old mask
+                // on all masks in `byte_masks` except for `byte_masks[mask_idx]`
+                assert forall |i| 0 <= i < byte_masks_pairs.len() && i != mask_idx implies
+                    new_mask_pred(byte_masks_pairs[i]) == old_mask_pred(byte_masks_pairs[i])
+                by {
+                    let byte_mask = byte_masks_pairs[i].1;
+                    assert(
+                        mask == old_mask | cur_byte_mask ==>
+                        cur_byte_mask & byte_mask == 0 ==>
+                        old_mask & byte_mask == mask & byte_mask
+                    ) by (bit_vector);
+
+                    // By wf of byte_masks
+                    assert(cur_byte_mask == MasksByByteSized(*byte_masks).0[mask_idx as int]);
+                    assert(byte_mask == MasksByByteSized(*byte_masks).0[i]);
+                    assert(cur_byte_mask & byte_mask == 0);
+                }
+                
+                assert(new_mask_pred(byte_masks_pairs[mask_idx as int])) by {
+                    assert(cur_byte_mask != 0 ==> (old_mask | cur_byte_mask) & cur_byte_mask != 0) by (bit_vector);
+                }
+
+                assume(!old_mask_pred(byte_masks_pairs[mask_idx as int]));
+            }
+
+            let prefix = next_states_paired[i].1.prefix;
+            assert(prefix@.len() < usize::MAX);
 
             next_state_specs.push(StateSpec {
-                prefix: next_states_paired[i].1.prefix,
+                prefix: prefix,
                 index: edge_start + i,
             });
         }
@@ -1176,8 +1277,10 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             _ => TrieState::Search(search_node),
         };
 
-        assume(false);
-        (state, next_state_specs)
+        // TODO
+        assume(next_state_specs@.len() <= view_btree_map(*sorted).len() - edge_start);
+        
+        Ok((state, next_state_specs))
     }
 }
 
