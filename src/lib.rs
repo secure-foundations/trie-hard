@@ -33,7 +33,7 @@ use std::{
     ops::RangeFrom,
 };
 use verus_utils::*;
-use vstd::{prelude::*, slice::*, assert_seqs_equal};
+use vstd::{prelude::*, slice::*, assert_seqs_equal, assert_maps_equal, assert_maps_equal_internal};
 use specs::*;
 use btree_map::*;
 use vec_deque::*;
@@ -872,12 +872,12 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
             masks.wf(),
             values@.len() < usize::MAX - 256 - 1,
         ensures
-            res@.wf(),
+            res.wf(),
             ({
-                let values_as_map = verus_utils::map_from_seq(values@);
-                &&& forall |k| values_as_map.contains_key(k) ==> 
-                    (#[trigger] res@.get_alt(k@)) == Some(values_as_map[k]@)
-                &&& forall |k| !values_as_map.contains_key(k) ==>
+                let values_map = verus_utils::map_from_seq(values@);
+                &&& forall |k| values_map.contains_key(k) ==> 
+                    (#[trigger] res@.get_alt(k@)) == Some(values_map[k]@)
+                &&& forall |k| !values_map.contains_key(k) ==>
                     (#[trigger] res@.get_alt(k@)) is None
             })
     {
@@ -888,9 +888,11 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         //     .collect::<BTreeMap<_, _>>();
 
         let sorted = new_btree_map(values);
+        let ghost values_map = verus_utils::map_from_seq(values@);
         assert(view_btree_map(sorted).len() <= values@.len()) by {
             verus_utils::lemma_map_from_seq_len(values@);
         }
+        assert(view_btree_map(sorted) == values_map);
 
         let mut nodes = Vec::new();
         let mut next_index = 1;
@@ -904,12 +906,33 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         let mut spec_queue = VecDeque::new();
         spec_queue.push_back(root_state_spec);
 
+        proof {
+            let trie_hard = TrieHardSized { nodes, masks };
+            assert(trie_hard.wf());
+        }
+
+        let ghost mut todo_values_map = values_map;
+        let ghost mut work_queue_values_map = Map::empty();
+        let ghost mut completed_values_map = Map::empty();
+        proof {
+            assert_maps_equal!(values_map == todo_values_map.union_prefer_right(work_queue_values_map).union_prefer_right(completed_values_map));
+        }
+
         loop 
             invariant
                 forall |i| 0 <= i < view_vec_deque(spec_queue).len()
                     ==> (#[trigger] view_vec_deque(spec_queue)[i]).prefix@.len() < usize::MAX,
                 view_btree_map(sorted).len() < usize::MAX - 256 - 1, // needed because of loop isolation
+                view_btree_map(sorted) == values_map,
                 0 <= next_index <= view_btree_map(sorted).len() + 1, // because we have an extra root node for the empty string
+                todo_values_map.dom().disjoint(work_queue_values_map.dom()),
+                todo_values_map.dom().disjoint(completed_values_map.dom()),
+                work_queue_values_map.dom().disjoint(completed_values_map.dom()),
+                values_map == todo_values_map.union_prefer_right(work_queue_values_map).union_prefer_right(completed_values_map),                
+                ({
+                    let trie_hard = TrieHardSized { nodes, masks };
+                    &&& trie_hard.wf()
+                })
         {
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
@@ -926,6 +949,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 vec_deque_append_vec(&mut spec_queue, next_specs);
                 nodes.push(state);
             } else {
+                assert(view_vec_deque(spec_queue).len() == 0);
                 break;
             }
         }
@@ -952,6 +976,7 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             res.1@.len() <= view_btree_map(*sorted).len() - edge_start,
             forall |i| 0 <= i < res.1@.len()
                 ==> (#[trigger] res.1@[i]).prefix@.len() < usize::MAX,
+            
     {
         let prefix = spec.prefix;
         let prefix_len = prefix.len();
