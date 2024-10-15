@@ -1182,11 +1182,26 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
 
                 MasksByByteSized(*byte_masks).wf(),
 
+                // A correspondence to correctly trigger quantifiers in `MasksByByteSized::wf`
+                forall |i| 0 <= i < byte_masks@.len() ==>
+                    #[trigger] byte_masks@[i] == MasksByByteSized(*byte_masks).0[i],
+
                 // The masks collected so far should be equal to i
                 byte_masks@
                     .map(|i, m| (i as u8, m))
                     .filter(|m: (u8, Mask)| mask & m.1 != 0)
                     .len() == i,
+
+                // Current mask should be disjoint from all unprocessed elements
+                // in `next_states_paired`
+                forall |j| i <= j < next_states_paired@.len() ==>
+                    mask & byte_masks@[(#[trigger] next_states_paired@[j]).0 as int] == 0,
+
+                // `next_states_paired` should contain items with disjoint keys
+                forall |j, k|
+                    0 <= j < next_states_paired@.len() && 0 <= k < next_states_paired@.len() && j != k
+                    ==>
+                    (#[trigger] next_states_paired@[j]).0 != (#[trigger] next_states_paired@[k]).0,
 
                 // Indices of next_states_paired should be sorted
                 forall |j| 0 <= j < next_states_paired@.len() - 1 ==>
@@ -1201,11 +1216,27 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         {
             let ghost old_mask = mask;
             let mask_idx = next_states_paired[i].0 as usize;
+            let ghost cur_byte_mask = byte_masks@[mask_idx as int];
+
             mask |= byte_masks[mask_idx];
 
             // TODO: add precondition so that this doesn't happen
             if byte_masks[mask_idx] == 0 {
                 return Err(());
+            }
+
+            // Current mask should be disjoint from rest of the masks yet to be added
+            proof {
+                assert forall |j| i + 1 <= j < next_states_paired@.len() implies
+                    mask & byte_masks@[(#[trigger] next_states_paired@[j]).0 as int] == 0
+                by {
+                    let byte_mask_j = byte_masks@[next_states_paired@[j].0 as int];
+
+                    assert((old_mask | cur_byte_mask) & byte_mask_j == 0) by (bit_vector)
+                        requires
+                            cur_byte_mask & byte_mask_j == 0, // By MasksByByteSized::wf
+                            old_mask & byte_mask_j == 0; // By IH
+                }
             }
 
             // Prove the byte_masks length invariant
@@ -1216,31 +1247,24 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                 let new_mask_pred = |m: (u8, Mask)| mask & m.1 != 0;
                 let byte_masks_pairs = byte_masks@.map(|i, m| (i as u8, m));
 
-                let cur_byte_mask = byte_masks_pairs[mask_idx as int].1;
-
                 // Show that the new mask agrees with the old mask
                 // on all masks in `byte_masks` except for `byte_masks[mask_idx]`
                 assert forall |i| 0 <= i < byte_masks_pairs.len() && i != mask_idx implies
                     new_mask_pred(byte_masks_pairs[i]) == old_mask_pred(byte_masks_pairs[i])
                 by {
                     let byte_mask = byte_masks_pairs[i].1;
-                    assert(
-                        mask == old_mask | cur_byte_mask ==>
-                        cur_byte_mask & byte_mask == 0 ==>
-                        old_mask & byte_mask == mask & byte_mask
-                    ) by (bit_vector);
-
-                    // By wf of byte_masks
-                    assert(cur_byte_mask == MasksByByteSized(*byte_masks).0[mask_idx as int]);
-                    assert(byte_mask == MasksByByteSized(*byte_masks).0[i]);
-                    assert(cur_byte_mask & byte_mask == 0);
+                    assert(old_mask & byte_mask == mask & byte_mask) by (bit_vector)
+                        requires
+                            mask == old_mask | cur_byte_mask, // By defn
+                            cur_byte_mask & byte_mask == 0,; // By wf of byte_masks
                 }
                 
                 assert(new_mask_pred(byte_masks_pairs[mask_idx as int])) by {
-                    assert(cur_byte_mask != 0 ==> (old_mask | cur_byte_mask) & cur_byte_mask != 0) by (bit_vector);
+                    assert((old_mask | cur_byte_mask) & cur_byte_mask != 0) by (bit_vector)
+                        requires cur_byte_mask != 0; // By dynamic check
                 }
 
-                assume(!old_mask_pred(byte_masks_pairs[mask_idx as int]));
+                assert(!old_mask_pred(byte_masks_pairs[mask_idx as int]));
             }
 
             let prefix = next_states_paired[i].1.prefix;
