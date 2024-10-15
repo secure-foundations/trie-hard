@@ -985,7 +985,8 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         {
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
-                
+
+                assume(exists |k| #[trigger] view_btree_map(sorted).contains_key(k) && is_prefix_of(spec.prefix@, k@));
                 let (state, next_specs) = TrieState::<'_, _, Mask>::new(
                     spec,
                     next_index,
@@ -1039,7 +1040,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
 }
 
 impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
-    #[verifier::external_body]
+    // #[verifier::external_body]
     fn new(
         spec: StateSpec<'a>,
         edge_start: usize,
@@ -1049,6 +1050,10 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         requires
             spec.prefix@.len() < usize::MAX,
             edge_start <= usize::MAX - 256,
+
+            // There must be some elements in the sorted map with the given prefix
+            exists |k| #[trigger] view_btree_map(*sorted).contains_key(k) && is_prefix_of(spec.prefix@, k@),
+
         ensures
             res.1@.len() <= view_btree_map(*sorted).len() - edge_start,
             forall |i| 0 <= i < res.1@.len()
@@ -1078,9 +1083,21 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         let mut last_seen = None;
 
         let items_with_prefix = find_elements_with_prefix(sorted, prefix);
-        let mut next_states_paired = Vec::new();
+        let mut next_states_paired = BTreeMap::new();
 
-        for i in 0..items_with_prefix.len()
+        let items_with_prefix_len = items_with_prefix.len();
+        assert(items_with_prefix_len > 0);
+
+        for i in 0..items_with_prefix_len
+            invariant
+                forall |j| 0 <= j < items_with_prefix@.len() ==>
+                    is_prefix_of(prefix@, (#[trigger] items_with_prefix@[j]).0@),
+
+                items_with_prefix_len == items_with_prefix@.len(),
+                prefix_len == prefix@.len(),
+                next_prefix_len == prefix_len + 1,
+
+                i > 0 ==> last_seen is Some,
         {
             let (key, val) = items_with_prefix[i];
 
@@ -1089,31 +1106,40 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             if verus_utils::slice_eq(key, prefix) {
                 prefix_match = Some((key, val));
             } else {
+                assert(key@.len() > prefix@.len()) by {
+                    assert(is_prefix_of(prefix@, key@));
+                    if key@.len() == prefix@.len() {
+                        assert(key@ =~= prefix@);
+                    }
+                }
+
                 // Safety: The byte at prefix_len must exist otherwise we
                 // would have ended up in the other branch of this statement
                 let next_c = key[prefix_len];
                 let next_prefix = slice_take(key, next_prefix_len);
 
-                next_states_paired.push((
-                    next_c,
-                    StateSpec {
-                        prefix: next_prefix,
-                        index: 0,
-                    },
-                ));
+                next_states_paired.insert(next_c, StateSpec {
+                    prefix: next_prefix,
+                    index: 0,
+                });
             }
         }
+
+        // Turn BTreeMap to Vec
+        let next_states_paired = btree_map_u8_to_vec(next_states_paired);
 
         // Safety: last_seen will be present because we saw at least one
         //         entry must be present for this function to be called
         let (last_k, last_v) = last_seen.unwrap();
 
         if items_with_prefix.len() == 1 {
+            assume(false);
             return (TrieState::Leaf(last_k, last_v), vec![]);
         }
 
         // No next_states means we hit a leaf node
         if next_states_paired.len() == 0 {
+            assume(false);
             return (TrieState::Leaf(last_k, last_v), vec![], );
         }
 
@@ -1126,7 +1152,14 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         // Update the index for the next state now that we have ordered by
         let mut next_state_specs = Vec::new();
 
-        for i in 0..next_states_paired.len() {
+        let next_states_paired_len = next_states_paired.len();
+
+        for i in 0..next_states_paired_len
+            invariant
+                next_states_paired_len == next_states_paired@.len(),
+                next_states_paired_len <= 256,
+                edge_start <= usize::MAX - 256,
+        {
             mask |= byte_masks[next_states_paired[i].0 as usize];
 
             next_state_specs.push(StateSpec {
@@ -1143,6 +1176,7 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             _ => TrieState::Search(search_node),
         };
 
+        assume(false);
         (state, next_state_specs)
     }
 }
