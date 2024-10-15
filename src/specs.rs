@@ -221,7 +221,7 @@ impl<T> SpecTrieHard<T> {
         // For any node, there is a path from the root to that node
         forall |i: int| #![trigger self.nodes[i]]
             0 <= i < self.nodes.len() ==>
-            exists |ancestors: Seq<int>| self.is_path(ancestors, 0, i)
+            exists |ancestors: Seq<int>| #[trigger] self.is_path(ancestors, 0, i)
     }
 
     pub open spec fn wf(self) -> bool {
@@ -232,7 +232,7 @@ impl<T> SpecTrieHard<T> {
         &&& self.wf_no_junk()
     }
 
-    pub closed spec fn is_path(self, path: Seq<int>, i: int, j: int) -> bool
+    pub open spec fn is_path(self, path: Seq<int>, i: int, j: int) -> bool
     {
         &&& path.len() > 0
         &&& path[0] == i
@@ -988,6 +988,17 @@ impl<T> SpecTrieHard<T> {
                         },
                     }),
                 );
+    
+    /// TODO: prove this
+    #[verifier::external_body]
+    pub proof fn lemma_paths_witness_to_no_junk(self, paths: Seq<Seq<int>>)
+        requires
+            paths.len() == self.nodes.len(),
+            forall |i| 0 <= i < paths.len() ==> #[trigger] self.is_path(paths[i], 0, i),
+        
+        ensures
+            self.wf_no_junk(),
+    {}
 }
 
 impl<T> View for SpecTrieHard<T> {

@@ -136,11 +136,18 @@ where
     }
 }
 
-verus! {
+/// StateSpec in the original version not ported to Verus
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct StateSpecOld<'a> {
+    prefix: &'a [u8],
+    index: usize,
+}
+
+verus! {
 struct StateSpec<'a> {
     prefix: &'a [u8],
     index: usize,
+    path: Ghost<Seq<int>>, // Path from root to the current node
 }
 
 #[derive(Debug, Clone)]
@@ -925,9 +932,11 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         let mut nodes = Vec::new();
         let mut next_index = 1;
 
+        let ghost root_path = seq![0];
         let root_state_spec = StateSpec {
             prefix: &[],
             index: 0,
+            path: Ghost(root_path),
         };
 
         // need to axiomatize the work queue
@@ -945,6 +954,8 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         proof {
             assert_maps_equal!(values_map == todo_values_map.union_prefer_right(work_queue_values_map).union_prefer_right(completed_values_map));
         }
+
+        let ghost mut node_root_paths = seq![];
 
         loop 
             invariant
@@ -975,16 +986,37 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                     }
                 },
 
+                // Each node in the queue will be added to the node list with
+                // index `nodes@.len() + <index in queue>`
+                forall |i| 0 <= i < view_vec_deque(spec_queue).len() ==>
+                    (#[trigger] view_vec_deque(spec_queue)[i]).path@.len() >= 1 &&
+                    view_vec_deque(spec_queue)[i].path@.last() == nodes@.len() + i &&
+                    view_vec_deque(spec_queue)[i].index == nodes@.len() + i,
+
+                // Exists a path from the root to each node
+                node_root_paths.len() == nodes@.len(),
+                
+                forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
+                    (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i),
+
                 masks.wf(),
             
             ensures
-                view_vec_deque(spec_queue).len() == 0
+                view_vec_deque(spec_queue).len() == 0,
+
+                forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
+                    (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i),
         {
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
 
+                let ghost prev_nodes = nodes@;
+
                 // TODO
-                assume(exists |k| #[trigger] view_btree_map(sorted).contains_key(k) && is_prefix_of(spec.prefix@, k@));
+                assume(exists |k| #[trigger]
+                    view_btree_map(sorted).contains_key(k) &&
+                    is_prefix_of(spec.prefix@, k@));
+
                 let (state, next_specs) = TrieState::<'_, _, Mask>::new(
                     spec,
                     next_index,
@@ -996,12 +1028,24 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 // spec_queue.extend(next_specs);
                 vec_deque_append_vec(&mut spec_queue, next_specs);
                 nodes.push(state);
+
+                proof {
+                    node_root_paths = node_root_paths + seq![spec.path@];
+                }
+    
+                // TODO
+                // Need to show:
+                // 1. spec.path is valid
+                // 2. all previously valid paths are still valid paths
+                assume(forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
+                    (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i));
             } else {
                 break;
             }
         }
 
         let ghost trie = TrieHardSized { nodes, masks };
+
         assert(trie@.wf_acyclic());
         assert(trie@.wf_distinct_children()) by {
             // This is true as long as the masks are well-formed
@@ -1027,6 +1071,10 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 }
             }
         };
+
+        assert(trie@.wf_no_junk()) by {
+            trie@.lemma_paths_witness_to_no_junk(node_root_paths);
+        }
 
         assume(false);
 
@@ -1071,6 +1119,11 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                         .filter(|m: (u8, Mask)| search.mask & m.1 != 0)
                         .len() == next_state_specs@.len()
             }
+
+            // Indices of returned specs should be `edge_start + <index in next_state_specs>`
+            &&& forall |i| 0 <= i < next_state_specs@.len() ==>
+                (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i] &&
+                (next_state_specs@[i]).index == edge_start + i
         }   
     {
         let prefix = spec.prefix;
@@ -1125,9 +1178,11 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                 let next_c = key[prefix_len];
                 let next_prefix = slice_take(key, next_prefix_len);
 
+                let ghost empty_path = seq![];
                 next_states_paired.insert(next_c, StateSpec {
                     prefix: next_prefix,
                     index: 0,
+                    path: Ghost(empty_path), // unset
                 });
             }
         }
@@ -1213,6 +1268,11 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
 
                 forall |j| 0 <= j < next_state_specs@.len() ==>
                     (#[trigger] next_state_specs@[j]).prefix@.len() < usize::MAX,
+
+                // Some facts about StateSpec::path
+                forall |i| 0 <= i < next_state_specs@.len() ==>
+                    (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i] &&
+                    (next_state_specs@[i]).index == edge_start + i,
         {
             let ghost old_mask = mask;
             let mask_idx = next_states_paired[i].0 as usize;
@@ -1273,6 +1333,7 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             next_state_specs.push(StateSpec {
                 prefix: prefix,
                 index: edge_start + i,
+                path: Ghost(spec.path@ + seq![edge_start + i]),
             });
         }
 
@@ -1564,7 +1625,7 @@ macro_rules! trie_impls {
                 let mut nodes = Vec::new();
                 let mut next_index = 1;
 
-                let root_state_spec = StateSpec {
+                let root_state_spec = StateSpecOld {
                     prefix: &[],
                     index: 0,
                 };
@@ -1596,12 +1657,12 @@ macro_rules! trie_impls {
 
         impl <'a, T> TrieState<'a, T, $int_type> where T: 'a + Copy + View {
             fn new(
-                spec: StateSpec<'a>,
+                spec: StateSpecOld<'a>,
                 edge_start: usize,
                 byte_masks: &[$int_type; 256],
                 sorted: &BTreeMap<&'a [u8], T>,
-            ) -> (Self, Vec<StateSpec<'a>>) {
-                let StateSpec { prefix, .. } = spec;
+            ) -> (Self, Vec<StateSpecOld<'a>>) {
+                let StateSpecOld { prefix, .. } = spec;
 
                 let prefix_len = prefix.len();
                 let next_prefix_len = prefix_len + 1;
@@ -1628,7 +1689,7 @@ macro_rules! trie_impls {
 
                             Some((
                                 *next_c,
-                                StateSpec {
+                                StateSpecOld {
                                     prefix: next_prefix,
                                     index: 0,
                                 },
