@@ -478,9 +478,9 @@ impl SearchNode<Mask> {
     }
 
     /// Get the spec children nodes represented by a SearchNode
-    closed spec fn view<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> Seq<SpecChildRef>
+    closed spec fn view(self, masks: MasksByByteSized<Mask>) -> Seq<SpecChildRef>
     {
-        trie.masks.0@
+        masks.0@
             // Find bytes corresponding to the bits set in self.mask
             // in the order specified in trie.masks
             .map(|i, m| (i as u8, m))
@@ -537,14 +537,14 @@ impl SearchNode<Mask> {
             self.wf(trie),
 
         ensures ({
-            let children = self.view(trie);
+            let children = self.view(trie.masks);
             forall |i, j|
                 #![trigger children[i], children[j]]
                 0 <= i < children.len() && 0 <= j < children.len() && i != j
                 ==> children[i].label != children[j].label
         })
     {
-        let children = self.view(trie);
+        let children = self.view(trie.masks);
 
         assert(forall |i, j|
             #![trigger children[i], children[j]]
@@ -566,7 +566,7 @@ impl SearchNode<Mask> {
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as int;
 
-            let children = self.view(trie);
+            let children = self.view(trie.masks);
 
             mask_res != 0 ==> {
                 &&& 0 <= index_offset < children.len()
@@ -587,8 +587,8 @@ impl SearchNode<Mask> {
             self.wf(*trie),
 
         ensures
-            res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view(*trie)) == Some(i as int),
-            res is None ==> SpecTrieHard::<T::V>::find_children(c, self.view(*trie)) is None
+            res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view(trie.masks)) == Some(i as int),
+            res is None ==> SpecTrieHard::<T::V>::find_children(c, self.view(trie.masks)) is None
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
@@ -599,7 +599,7 @@ impl SearchNode<Mask> {
         //     self.edge_start + index_offset
         // })
 
-        let ghost children = self.view(*trie);
+        let ghost children = self.view(trie.masks);
 
         proof {
             broadcast use verus_utils::lemma_filter_equiv_pred;
@@ -645,12 +645,12 @@ impl<'a, T: View> View for TrieHardSized<'a, T, Mask> {
                         SpecTrieState::Leaf(SpecItem { key: k@, value: v@ }),
 
                     TrieState::Search(search) =>
-                        SpecTrieState::Search(None, search.view(*self)),
+                        SpecTrieState::Search(None, search.view(self.masks)),
 
                     TrieState::SearchOrLeaf(k, v, search) =>
                         SpecTrieState::Search(
                             Some(SpecItem { key: k@, value: v@ }),
-                            search.view(*self),
+                            search.view(self.masks),
                         ),
                 }
             }),
@@ -752,7 +752,7 @@ where
                 | TrieState::SearchOrLeaf(_, _, search) => {
                     proof {
                         assert(key@.take(i + 1) == key@.take(i as int) + seq![c]);
-                        let children = search.view(*self);
+                        let children = search.view(self.masks);
                         SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
                     }
                     
@@ -981,7 +981,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                         &&& search.edge_start > i
                         
                         // Child indices stay within bound
-                        &&& search.edge_start + search.view(TrieHardSized { nodes, masks }).len() <=
+                        &&& search.edge_start + search.view(masks).len() <=
                             view_vec_deque(spec_queue).len() + nodes@.len()
                     }
                 },
@@ -992,6 +992,22 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                     (#[trigger] view_vec_deque(spec_queue)[i]).path@.len() >= 1 &&
                     view_vec_deque(spec_queue)[i].path@.last() == nodes@.len() + i &&
                     view_vec_deque(spec_queue)[i].index == nodes@.len() + i,
+
+                // Each state spec in the queue has a valid path prefix
+                // and the second to last element of the path should point to the last element
+                // in the `SpecTrieHard::is_parent_of` relation
+                forall |i| #![trigger view_vec_deque(spec_queue)[i]]
+                    0 <= i < view_vec_deque(spec_queue).len() ==> {
+                        let path = view_vec_deque(spec_queue)[i].path@;
+                        let snd_last = path[path.len() - 2];
+
+                        ||| path.len() == 1 && path =~= seq![0]
+                        ||| {
+                            &&& path.len() > 1
+                            &&& (TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some()
+                            &&& (TrieHardSized { nodes, masks })@.is_path(path.drop_last(), 0, snd_last)
+                        }
+                    },
 
                 // Exists a path from the root to each node
                 node_root_paths.len() == nodes@.len(),
@@ -1007,10 +1023,11 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
                     (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i),
         {
+            let ghost prev_spec_queue = spec_queue;
+            let ghost prev_nodes = nodes;
+            
             if let Some(spec) = spec_queue.pop_front() {
                 // debug_assert_eq!(spec.index, nodes.len());
-
-                let ghost prev_nodes = nodes@;
 
                 // TODO
                 assume(exists |k| #[trigger]
@@ -1029,16 +1046,26 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 vec_deque_append_vec(&mut spec_queue, next_specs);
                 nodes.push(state);
 
+                // Show that the new node has a valid path
                 proof {
                     node_root_paths = node_root_paths + seq![spec.path@];
+
+                    // Automatically deduce that extending `nodes` would not
+                    // make previously valid paths invalid
+                    broadcast use SpecTrieHard::lemma_extension_preserves_valid_paths;
+        
+                    // `spec.path` is a valid path now that we've added the node
+                    assert((TrieHardSized { nodes, masks })@.is_path(spec.path@, 0, spec.index as int)) by {
+                        if spec.path@.len() > 1 {
+                            let path_prefix = spec.path@.drop_last();
+                            let snd_last = spec.path@[spec.path@.len() - 2];
+
+                            assert((TrieHardSized { nodes, masks })@.is_path(path_prefix, 0, snd_last));
+                            assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, spec.index as int).is_some());
+                            broadcast use SpecTrieHard::lemma_append_path;
+                        }
+                    }
                 }
-    
-                // TODO
-                // Need to show:
-                // 1. spec.path is valid
-                // 2. all previously valid paths are still valid paths
-                assume(forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
-                    (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i));
             } else {
                 break;
             }
@@ -1108,7 +1135,7 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
 
             // Required for wf_acyclic
             &&& match state {
-                TrieState::Leaf(k, v) => true,
+                TrieState::Leaf(..) => next_state_specs@.len() == 0,
                 TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
                     search.edge_start == edge_start &&
                     
@@ -1121,9 +1148,24 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             }
 
             // Indices of returned specs should be `edge_start + <index in next_state_specs>`
-            &&& forall |i| 0 <= i < next_state_specs@.len() ==>
-                (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i] &&
-                (next_state_specs@[i]).index == edge_start + i
+            // and the path should be an extension of the given `spec.path`
+            // such that the last element of `spec.path` should "point to" the new last element
+            &&& forall |i| 0 <= i < next_state_specs@.len() ==> {
+                &&& (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i]
+                &&& (next_state_specs@[i]).index == edge_start + i
+
+                // If the new node is a non-leaf, then it should point to
+                // the last node in the path
+                &&& match state {
+                    TrieState::Leaf(k, v) => true,
+                    TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
+                        let children = search.view(MasksByByteSized(*byte_masks));
+
+                        // TODO: say something about the label too
+                        children[i].idx == edge_start + i
+                    }
+                }
+            }
         }   
     {
         let prefix = spec.prefix;

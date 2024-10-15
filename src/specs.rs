@@ -246,7 +246,7 @@ impl<T> SpecTrieHard<T> {
     /// Check if node j is a child of i, and returns the edge label
     pub open spec fn is_parent_of(self, i: int, j: int) -> Option<u8>
     {
-        if 0 <= i < self.nodes.len() && 0 <= j < self.nodes.len() {
+        if 0 <= i < self.nodes.len() {
             match self.nodes[i] {
                 SpecTrieState::Search(_, children) => {
                     if exists |k| 0 <= k < children.len() && (#[trigger] children[k]).idx == j {
@@ -540,7 +540,8 @@ impl<T> SpecTrieHard<T> {
     /// where prefix is the path labels from 0 to i
     pub proof fn lemma_path_to_wf_prefix(self, path: Seq<int>, i: int)
         requires
-            self.wf(),
+            self.wf_acyclic(),
+            self.wf_prefix(seq![], 0),
             self.is_path(path, 0, i),
 
         ensures
@@ -935,6 +936,57 @@ impl<T> SpecTrieHard<T> {
         self.lemma_get_alt_to_exists_key(key);
         self.lemma_wf_implies_unique_keys();
     }
+
+    /// TODO: prove this
+    #[verifier::external_body]
+    pub proof fn lemma_paths_witness_to_no_junk(self, paths: Seq<Seq<int>>)
+        requires
+            paths.len() == self.nodes.len(),
+            forall |i| 0 <= i < paths.len() ==> #[trigger] self.is_path(paths[i], 0, i),
+        
+        ensures
+            self.wf_no_junk(),
+    {}
+
+    /// Extending the node list preserves valid paths in the old node list
+    pub broadcast proof fn lemma_extension_preserves_valid_paths(self, path: Seq<int>, other: SpecTrieHard<T>)
+        requires
+            #[trigger] self.is_path(path, 0, path.last()),
+            0 <= path.last() < self.nodes.len(),
+            is_prefix_of(self.nodes, other.nodes),
+
+        ensures
+            #[trigger] other.is_path(path, 0, path.last()),
+
+        decreases path.len()
+    {
+        if path.len() > 1 {
+            assert(self.is_parent_of(path[path.len() - 2], path.last()).is_some());
+            assert(other.is_parent_of(path[path.len() - 2], path.last()).is_some());
+            self.lemma_extension_preserves_valid_paths(path.drop_last(), other);
+            broadcast use SpecTrieHard::lemma_append_path;
+        }
+    }
+
+    pub broadcast proof fn lemma_append_path(self, path: Seq<int>)
+        requires
+            path.len() > 1,
+            0 <= path.last() < self.nodes.len(),
+            #[trigger] self.is_path(path.drop_last(), 0, path[path.len() - 2]),
+            self.is_parent_of(path[path.len() - 2], path.last()).is_some(),
+
+        ensures
+            self.is_path(path, 0, path.last()),
+    {
+        assert forall |k: int, l| 0 <= k < path.len() - 1 && l == k + 1 implies
+            (#[trigger] self.is_parent_of(path[k], path[l])).is_some()
+        by {
+            if k < path.len() - 2 {
+                assert(path[k] == path.drop_last()[k]);
+                assert(path[l] == path.drop_last()[l]);
+            }
+        }
+    }
 }
 
 impl<T> SpecTrieHard<T> {
@@ -988,17 +1040,6 @@ impl<T> SpecTrieHard<T> {
                         },
                     }),
                 );
-    
-    /// TODO: prove this
-    #[verifier::external_body]
-    pub proof fn lemma_paths_witness_to_no_junk(self, paths: Seq<Seq<int>>)
-        requires
-            paths.len() == self.nodes.len(),
-            forall |i| 0 <= i < paths.len() ==> #[trigger] self.is_path(paths[i], 0, i),
-        
-        ensures
-            self.wf_no_junk(),
-    {}
 }
 
 impl<T> View for SpecTrieHard<T> {
