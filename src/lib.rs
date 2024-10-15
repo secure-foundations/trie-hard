@@ -32,7 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
-use vstd::{prelude::*, slice::*, assert_seqs_equal};
+use vstd::{prelude::*, slice::*, assert_seqs_equal,};
 use specs::*;
 use btree_map::*;
 use vec_deque::*;
@@ -500,6 +500,27 @@ impl SearchNode<Mask> {
         }
     }
 
+    // preserves inequalities over the map filter map sequence
+    proof fn lemma_map_filter_map_inequality(self, s : [Mask; 256])
+        requires 
+            forall |i : int, j : int| 0 <= i < j < s.len() ==> s[i] < s[j],
+        ensures 
+            ({
+                let s_mfm = s@.map(|i, m| (i as u8, m))
+                            .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
+                            .map_values(|m: (u8, Mask)| m.0);
+                forall |i : int, j : int| 0 <= i < j < s_mfm.len() ==> s_mfm[i] < s_mfm[j]
+            })
+    {
+        let s_m = s@.map(|i, m| (i as u8, m));
+        let s_mf = s_m.filter(|m: (u8, Mask)| self.mask & m.1 != 0);
+
+        assert forall |i : int, j : int| #![trigger s_mf[i], s_mf[j]] 0 <= i < j < s_mf.len() implies s_mf[i].0 < s_mf[j].0 by {
+            assert (exists |i_ : int, j_ : int| 0 <= i_ < j_ < s_m.len() && s_mf[i] == s_m[i_] && s_mf[j] == s_m[j_]) 
+                by {verus_utils::lemma_filter_ordering(s_m, |m: (u8, Mask)| self.mask & m.1 != 0, i, j)};
+            }
+    }
+
     /// Self::view(trie) should generate a sequence of children nodes
     /// with disjoint labels
     proof fn lemma_wf_search_view_disjointness<T: View>(self, trie: TrieHardSized<'_, T, Mask>)
@@ -515,8 +536,18 @@ impl SearchNode<Mask> {
                 ==> children[i].label != children[j].label
         })
     {
-        // TODO
-        admit();
+        let children = self.view(trie);
+
+        let used_bytes = trie.masks.0@
+                    .map(|i, m| (i as u8, m))
+                    .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
+                    .map_values(|m: (u8, Mask)| m.0);
+
+        assert(forall |i, j|
+            #![trigger children[i], children[j]]
+            0 <= i < j < children.len()
+            ==> children[i].label < children[j].label)
+            by {self.lemma_map_filter_map_inequality(trie.masks.0)};
     }
 
     /// Bascially the spec for evaluate, but factored out since we might need induction
@@ -577,10 +608,10 @@ impl SearchNode<Mask> {
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
 
-            // assume(Self::count_ones_below(self.mask, c_mask) == index_offset as u32);
+            // assert(Self::count_ones_below(self.mask, c_mask) == index_offset as u32);
             
             // TODO: prove these
-            // assume(index_offset < 256);
+            // assert(index_offset < 256);
             // assume(0 <= index_offset < children.len());
             // assume(children[index_offset as int].label == c);
             // assume(children[index_offset as int].idx == self.edge_start + index_offset);

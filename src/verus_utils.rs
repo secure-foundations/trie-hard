@@ -23,6 +23,9 @@ pub proof fn lemma_seq_take_append_skip<T>(s: Seq<T>, n: int)
     ensures s =~= s.take(n).add(s.skip(n))
 {}
 
+
+// pub 
+
 pub open spec fn u8_count_ones(i: u8) -> u32
     decreases i
 {
@@ -101,5 +104,51 @@ pub broadcast proof fn lemma_filter_equiv_pred<A>(s: Seq<A>, pred1: spec_fn(A) -
     requires forall |i| 0 <= i < s.len() ==> pred1(s[i]) == pred2(s[i])
     ensures #[trigger] s.filter(pred1) == #[trigger] s.filter(pred2)
 {}
+
+pub proof fn lemma_filter_last<A>(s: Seq<A>, pred: spec_fn(A) -> bool,)
+    requires
+        // 0 <= i,
+        // i == s.filter(pred).len() - 1,
+        s.len() >= 1,
+        s.filter(pred).len() >= 1,
+        pred(s.last())
+    ensures
+        s.filter(pred).last() == s.last()
+    decreases s.len()
+{
+    reveal_with_fuel(Seq::<_>::filter, 1); 
+    assert (s.filter(pred) == s.drop_last().filter(pred).push(s.last()));
+}
+
+pub proof fn lemma_filter_existential<A>(s: Seq<A>, pred: spec_fn(A) -> bool, i: int)
+    requires
+        0 <= i < s.filter(pred).len()
+    ensures 
+        exists |i_ : int| 0 <= i_ < s.len() && s.filter(pred)[i] == s[i_],
+    decreases s.len()
+{
+    reveal_with_fuel(Seq::<_>::filter, 1); 
+    if (i == s.filter(pred).len() - 1 && pred(s.last())) {
+        assert (s.filter(pred).last() == s.last()) by {lemma_filter_last(s, pred)};
+    } else {
+        lemma_filter_existential(s.drop_last(), pred, i)
+    }
+}
+
+pub proof fn lemma_filter_ordering<A>(s: Seq<A>, pred: spec_fn(A) -> bool, i: int, j : int)
+    requires
+        0 <= i < j < s.filter(pred).len()
+    ensures 
+        exists |i_ : int, j_ : int| 0 <= i_ < j_ < s.len() && s.filter(pred)[i] == s[i_] && s.filter(pred)[j] == s[j_],
+    decreases s.len()
+{  
+    reveal_with_fuel(Seq::<_>::filter, 1);   
+    if (j == s.filter(pred).len() - 1 && pred(s.last())) {
+        lemma_filter_existential(s.drop_last(), pred, i)
+    } else {
+        lemma_filter_ordering(s.drop_last(), pred, i, j)
+    }
+}
+
 
 }
