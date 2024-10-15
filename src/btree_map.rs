@@ -35,7 +35,9 @@ pub fn find_elements_with_prefix<'a, 'b: 'a, V: Copy>(bt: &BTreeMap<&'a [u8], V>
         r@.len() <= view_btree_map(*bt).len(),
 
         // Results must have the given prefix
-        forall |i| 0 <= i < r@.len() ==> is_prefix_of(prefix@, (#[trigger] r@[i]).0@),
+        forall |i| 0 <= i < r@.len() ==>
+            view_btree_map(*bt).contains_key((#[trigger] r@[i]).0) &&
+            is_prefix_of(prefix@, (#[trigger] r@[i]).0@),
 
         // Results must include all items with the given prefix
         forall |k| #[trigger] view_btree_map(*bt).contains_key(k)
