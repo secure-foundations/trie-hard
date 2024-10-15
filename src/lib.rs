@@ -32,7 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
-use verus_utils::slice_take;
+use verus_utils::*;
 use vstd::{prelude::*, slice::*, assert_seqs_equal};
 use specs::*;
 use btree_map::*;
@@ -866,11 +866,20 @@ where
 verus! {
 
 impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
-    // #[verifier::external_body]
-    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> Self 
+    #[verifier::external_body]
+    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> (res: Self)
         requires
             masks.wf(),
             values@.len() < usize::MAX - 256 - 1,
+        ensures
+            res@.wf(),
+            ({
+                let values_as_map = verus_utils::map_from_seq(values@);
+                &&& forall |k| values_as_map.contains_key(k) ==> 
+                    (#[trigger] res@.get_alt(k@)) == Some(values_as_map[k]@)
+                &&& forall |k| !values_as_map.contains_key(k) ==>
+                    (#[trigger] res@.get_alt(k@)) is None
+            })
     {
         // let values = values.into_iter().collect::<Vec<_>>();
         // let sorted = values
@@ -880,7 +889,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
 
         let sorted = new_btree_map(values);
         assert(view_btree_map(sorted).len() <= values@.len()) by {
-            lemma_map_from_seq_len(values@);
+            verus_utils::lemma_map_from_seq_len(values@);
         }
 
         let mut nodes = Vec::new();

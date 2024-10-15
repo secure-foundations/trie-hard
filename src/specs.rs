@@ -92,6 +92,22 @@ impl<T> SpecTrie<T> {
         }
     }
 
+    // pub open spec fn elems(self) -> Set<(Seq<u8>, T)>
+    //     decreases self
+    //     when self.wf()
+    // {
+    //     match self {
+    //         SpecTrie::Leaf(key, value) => set![(key, value)],
+    //         SpecTrie::Search(value, children) => {
+    //             let this_elem = match value {
+    //                 Some(value) => set![(seq![], value)],
+    //                 None => set![],
+    //             };
+    //             let children_elems = children.map(|child: SpecChild<T>| child.node.elems());
+    //         }
+    //     }
+    // }
+
     // // Currently fails to prove termination
     // pub open spec fn as_map_helper(self, prefix: Seq<u8>) -> Map<Seq<u8>, T>
     //     decreases self
