@@ -473,16 +473,6 @@ impl SearchNode<Mask> {
     /// Get the spec children nodes represented by a SearchNode
     closed spec fn view<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> Seq<SpecChildRef>
     {
-        // let used_bytes = trie.masks.0@
-        //     .map(|i, m| (i as u8, m))
-        //     .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
-        //     .map_values(|m: (u8, Mask)| m.0);
-
-        // Seq::new(used_bytes.len(), |i| SpecChildRef {
-        //     label: used_bytes[i],
-        //     idx: self.edge_start + i,
-        // })
-
         trie.masks.0@
             // Find bytes corresponding to the bits set in self.mask
             // in the order specified in trie.masks
@@ -548,11 +538,6 @@ impl SearchNode<Mask> {
         })
     {
         let children = self.view(trie);
-
-        let used_bytes = trie.masks.0@
-                    .map(|i, m| (i as u8, m))
-                    .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
-                    .map_values(|m: (u8, Mask)| m.0);
 
         assert(forall |i, j|
             #![trigger children[i], children[j]]
@@ -1084,7 +1069,6 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                     byte_masks@
                         .map(|i, m| (i as u8, m))
                         .filter(|m: (u8, Mask)| search.mask & m.1 != 0)
-                        .map_values(|m: (u8, Mask)| m.0)
                         .len() == next_state_specs@.len()
             }
         }   
@@ -1202,7 +1186,6 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                 byte_masks@
                     .map(|i, m| (i as u8, m))
                     .filter(|m: (u8, Mask)| mask & m.1 != 0)
-                    .map_values(|m: (u8, Mask)| m.0)
                     .len() == i,
 
                 // Indices of next_states_paired should be sorted
