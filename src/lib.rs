@@ -468,6 +468,7 @@ impl SearchNode<Mask> {
     closed spec fn wf<T: View>(self, trie: TrieHardSized<'_, T, Mask>) -> bool {
         // &&& self.edge_start + self.mask.count_ones() < trie.nodes@.len()
         &&& self.edge_start <= usize::MAX - 256
+        &&& self.mask == trie.masks.0@.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask)
     }
 
     /// Get the spec children nodes represented by a SearchNode
@@ -533,16 +534,16 @@ impl SearchNode<Mask> {
             let children = self.view(trie);
             forall |i, j|
                 #![trigger children[i], children[j]]
-                0 <= i < children.len() && 0 <= j < children.len() && i != j
-                ==> children[i].label != children[j].label
+                0 <= i < children.len() && 0 <= j < children.len() && i < j
+                ==> children[i].label < children[j].label
         })
     {
         let children = self.view(trie);
 
-        let used_bytes = trie.masks.0@
-                    .map(|i, m| (i as u8, m))
-                    .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
-                    .map_values(|m: (u8, Mask)| m.0);
+        // let used_bytes = trie.masks.0@
+        //             .map(|i, m| (i as u8, m))
+        //             .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
+        //             .map_values(|m: (u8, Mask)| m.0);
 
         assert(forall |i, j|
             #![trigger children[i], children[j]]
@@ -556,6 +557,8 @@ impl SearchNode<Mask> {
         requires
             trie.wf(),
             self.wf(trie),
+            // self.mask == trie.masks.0@.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask)
+            // forall |i| 0 <= i < trie.masks.0.len() ==> self.mask & trie.masks.0[i] == #[trigger] trie.masks.0[i],
 
         ensures ({
             let c_mask = trie.masks.0@[c as int];
@@ -572,7 +575,94 @@ impl SearchNode<Mask> {
             }
         })
     {
-        // TODO
+        let c_mask = trie.masks.0@[c as int];
+
+        //Distinct elements & to 0
+        assert ({
+            forall |i, j|
+            0 <= i < trie.masks.0.len() &&
+            0 <= j < trie.masks.0.len() && i != j
+            ==> trie.masks.0[i] & trie.masks.0[j] == 0
+        });
+
+        // Non-zero elements are sorted
+        assert ({
+            &&& forall |i, j| #![trigger trie.masks.0[i], trie.masks.0[j]]
+                    0 <= i < j < trie.masks.0.len() &&
+                    trie.masks.0[i] != 0 && trie.masks.0[j] != 0
+                    ==> trie.masks.0[i] < trie.masks.0[j]
+        });
+
+                    // Each element is has only one bit set
+        assert ({
+            &&& forall |i| 0 <= i < trie.masks.0.len()
+                    ==> (#[trigger] trie.masks.0[i]).count_ones() == 1
+        });
+
+        // our internal mask masked with c_mask
+        // need some info about self.mask?
+        let mask_res = self.mask & c_mask;
+
+
+
+        if (mask_res > 0) {
+            // if the bitwise and is > 0, this means that c is allowed
+
+            // this is true, since c_mask only has one 1\
+            // right now we are requiring it, but not sure if this is right
+            assert (mask_res == c_mask) by {lemma_and_sum(trie.masks.0@, c as int)};
+
+            // assert (trie@.nodes.len() > 0);
+
+            // gets all of the smaller bits
+            let smaller_bits = (mask_res - 1) as Mask;
+
+            // finds which one of these are with the mask
+            let smaller_bits_mask = smaller_bits & self.mask;
+
+            // counts the number of ones
+            let index_offset = smaller_bits_mask.count_ones() as int;
+
+            assert (index_offset == c) by {lemma_modifications_give_correct_offset(trie.masks.0@, self.mask, c as int)};
+
+            // children has type Seq<SpecChildRef>
+            let children = self.view(trie);
+
+            let used_bytes_m = trie.masks.0@.map(|i, m| (i as u8, m));
+            let used_bytes_mf = used_bytes_m.filter(|m: (u8, Mask)| self.mask & m.1 != 0);
+            let used_bytes = used_bytes_mf.map_values(|m: (u8, Mask)| m.0);
+
+            assert (
+                children
+                ==
+                Seq::new(used_bytes.len(), |i| SpecChildRef {
+                    label: used_bytes[i],
+                    idx: self.edge_start + i,
+                })
+            );
+
+            // assert (
+            //     children
+            //         ==
+            //         trie.masks.0@
+            //             .map(|i, m| (i as u8, m))
+            //             .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
+            //             .map_values(|m: (u8, Mask)| m.0));
+
+            assert (used_bytes_m.len() == trie.masks.0.len());
+            assert (used_bytes_m.len() >= used_bytes_m.filter(|m: (u8, Mask)| self.mask & m.1 != 0).len()) by {used_bytes_m.filter_lemma(|m: (u8, Mask)| self.mask & m.1 != 0)};
+            assert (used_bytes_mf.len() == used_bytes.len());
+
+
+            assert (children.len() <= trie.masks.0.len());
+            // assert (0 <= index_offset < children.len());
+
+            // children will basically correspond to labels corresponding to 0, 1, 2, ...
+            // assert (children[index_offset].label == c);
+
+        }
+
+   
         admit();
     }
 
@@ -583,6 +673,8 @@ impl SearchNode<Mask> {
         requires 
             trie.wf(),
             self.wf(*trie),
+            // self.mask == trie.masks.0@.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask),
+            // forall |i| 0 <= i < trie.masks.0.len() ==> self.mask & trie.masks.0[i] == #[trigger] trie.masks.0[i],
 
         ensures
             res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view(*trie)) == Some(i as int),

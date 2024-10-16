@@ -4,6 +4,9 @@ use vstd::{prelude::*, set_lib};
 
 verus!{
 
+pub type Mask = u16;
+
+
 #[verifier::external_body]
 pub(crate) fn slice_eq<T: PartialEq>(a: &[T], b: &[T]) -> (res: bool)
     ensures res == (a@ == b@)
@@ -215,5 +218,54 @@ pub proof fn lemma_filter_ordering<A>(s: Seq<A>, pred: spec_fn(A) -> bool, i: in
     }
 }
 
+pub proof fn lemma_and_sum(masks : Seq<Mask>, c : int)
+    requires
+        0 <= c < masks.len(),
+        forall |i, j|
+            0 <= i < masks.len() &&
+            0 <= j < masks.len() && i != j
+            ==> masks[i] & masks[j] == 0,
+        forall |i, j| #![trigger masks[i], masks[j]]
+            0 <= i < j < masks.len() &&
+            masks[i] != 0 && masks[j] != 0
+            ==> masks[i] < masks[j],
+    ensures 
+        (masks.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask)) 
+            & masks[c] == #[trigger] masks[c]
+{
+    admit()
+}
+
+
+pub proof fn lemma_modifications_give_correct_offset(masks : Seq<Mask>, mask_sum : Mask, c : int)
+    requires
+        0 <= c < masks.len(),
+        forall |i, j|
+            0 <= i < masks.len() &&
+            0 <= j < masks.len() && i != j
+            ==> masks[i] & masks[j] == 0,
+        forall |i, j| #![trigger masks[i], masks[j]]
+            0 <= i < j < masks.len() &&
+            masks[i] != 0 && masks[j] != 0
+            ==> masks[i] < masks[j],
+        forall |i| 0 <= i < masks.len()
+                 ==> (#[trigger] masks[i]).count_ones() == 1,
+        mask_sum == masks.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask)
+    ensures
+        ({
+            // gets all of the smaller bits
+            let smaller_bits = (masks[c] - 1) as Mask;
+
+            // finds which one of these are with the mask
+            let smaller_bits_mask = smaller_bits & mask_sum;
+
+            // counts the number of ones
+            let index_offset = smaller_bits_mask.count_ones() as int;
+
+            index_offset == c
+        })
+{
+    admit()
+}
 
 }
