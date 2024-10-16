@@ -35,7 +35,9 @@ pub fn find_elements_with_prefix<'a, 'b: 'a, V: Copy>(bt: &BTreeMap<&'a [u8], V>
         r@.len() <= view_btree_map(*bt).len(),
 
         // Results must have the given prefix
-        forall |i| 0 <= i < r@.len() ==> is_prefix_of(prefix@, (#[trigger] r@[i]).0@),
+        forall |i| 0 <= i < r@.len() ==>
+            view_btree_map(*bt).contains_key((#[trigger] r@[i]).0) &&
+            is_prefix_of(prefix@, (#[trigger] r@[i]).0@),
 
         // Results must include all items with the given prefix
         forall |k| #[trigger] view_btree_map(*bt).contains_key(k)
@@ -65,7 +67,12 @@ pub fn btree_map_u8_to_vec<V, A: Allocator + Clone>(bt: BTreeMap<u8, V, A>) -> (
                 r@[i].1 == view_btree_map(bt)[k],
 
         // Results are sorted
-        forall |i| #![trigger r@[i]] 0 <= i < r@.len() - 1 ==> r@[i].0 < r@[i + 1].0
+        forall |i| #![trigger r@[i]] 0 <= i < r@.len() - 1 ==> r@[i].0 < r@[i + 1].0,
+
+        // Distinct keys
+        // TODO: this can be derived from sortedness
+        forall |i, j| 0 <= i < r@.len() && 0 <= j < r@.len() && i != j
+            ==> (#[trigger] r@[i]).0 != (#[trigger] r@[j]).0,
 {
     bt.into_iter().collect()
 }

@@ -124,6 +124,29 @@ pub broadcast proof fn lemma_filter_equiv_pred<A>(s: Seq<A>, pred1: spec_fn(A) -
     ensures #[trigger] s.filter(pred1) == #[trigger] s.filter(pred2)
 {}
 
+pub broadcast proof fn lemma_filter_false_pred<A>(s: Seq<A>, pred: spec_fn(A) -> bool)
+    requires forall |i| 0 <= i < s.len() ==> !pred(s[i])
+    ensures #[trigger] s.filter(pred) == Seq::<A>::empty()
+{
+    // TODO
+    admit();
+}
+
+/// If `pred2` agress with `pred1` on all elements except `i`
+/// with `pred2(i) == true` and `pred1(i) == false`, then
+/// the filter length should be increased by 1
+pub broadcast proof fn lemma_filter_add_one<A>(s: Seq<A>, pred1: spec_fn(A) -> bool, pred2: spec_fn(A) -> bool, i: int)
+    requires
+        0 <= i < s.len(),
+        !pred1(#[trigger] s[i]),
+        pred2(s[i]),
+        forall |j| 0 <= j < s.len() && j != i ==> pred1(s[j]) == pred2(s[j]),
+
+    ensures (#[trigger] s.filter(pred1)).len() + 1 == (#[trigger] s.filter(pred2)).len()
+{
+    // TODO
+    admit();
+}
 
 #[verifier::opaque]
 pub open spec fn map_from_seq<K, V>(seq: Seq<(K, V)>) -> Map<K, V>
@@ -137,9 +160,11 @@ pub proof fn lemma_map_from_seq_len_helper<K, V>(acc: Map<K, V>, seq: Seq<(K, V)
     requires 
         acc.dom().finite()
     ensures
-        seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| { 
-            let (k, v) = kv; a.insert(k, v) 
-        }).len() <= acc.len() + seq.len()
+        acc.len()
+            <= seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| { 
+                    let (k, v) = kv; a.insert(k, v) 
+                }).len()
+            <= acc.len() + seq.len(),
     decreases seq.len()
 {
     if seq.len() == 0 {
@@ -153,7 +178,7 @@ pub proof fn lemma_map_from_seq_len_helper<K, V>(acc: Map<K, V>, seq: Seq<(K, V)
         let res = tail.fold_left_alt(acc.insert(k, v), |acc: Map<K, V>, kv: (K, V)| { 
             let (k, v) = kv; acc.insert(k, v) 
         });
-        assert(res.len() <= acc.insert(k, v).len() + tail.len()) by {
+        assert(acc.len() <= res.len() <= acc.insert(k, v).len() + tail.len()) by {
             lemma_map_from_seq_len_helper(acc.insert(k, v), tail);
         };
         assert(res == seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| { 
@@ -164,10 +189,20 @@ pub proof fn lemma_map_from_seq_len_helper<K, V>(acc: Map<K, V>, seq: Seq<(K, V)
 }
 
 pub proof fn lemma_map_from_seq_len<K, V>(seq: Seq<(K, V)>) 
-    ensures map_from_seq(seq).len() <= seq.len()
+    ensures
+        map_from_seq(seq).len() <= seq.len(),
+        seq.len() != 0 ==> map_from_seq(seq).len() != 0,
 {
     reveal(map_from_seq);
     lemma_map_from_seq_len_helper(Map::empty(), seq);
+
+    if seq.len() != 0 {
+        let singleton = Map::empty().insert(seq[0].0, seq[0].1);
+        lemma_map_from_seq_len_helper(singleton, seq.drop_first());
+        seq.drop_first().lemma_fold_left_alt(singleton, |acc: Map<K, V>, kv: (K, V)| { 
+            let (k, v) = kv; acc.insert(k, v) 
+        });
+    }
     seq.lemma_fold_left_alt(Map::empty(), |acc: Map<K, V>, kv: (K, V)| { 
         let (k, v) = kv; acc.insert(k, v) 
     });
