@@ -1172,6 +1172,13 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                             broadcast use SpecTrieHard::lemma_append_path;
                         }
                     }
+
+                    // TODO
+                    assume(match state {
+                        TrieState::Leaf(..) => true,
+                        TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
+                            search.wf(TrieHardSized { nodes, masks }),
+                    });
                 
                     // Show that each new next_spec has certain properties in their path component
                     assert forall |i| #![trigger view_vec_deque(spec_queue)[i]]
@@ -1206,7 +1213,13 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                                     TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
                                         // Check that `next_spec` is a child of the new node
                                         let children = search.view(masks);
+                                        assert(0 <= i - prev_spec_queue_len < children.len());
                                         assert(children[i - prev_spec_queue_len].idx == next_spec.index);
+                                        assert(0 <= snd_last < nodes@.len());
+                                        assert((TrieHardSized { nodes, masks })@.nodes[snd_last] is Search);
+                                        assert(next_spec.index == path.last());
+                                        assert((TrieHardSized { nodes, masks })@.nodes[snd_last]->Search_1 == children);
+
                                         assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some());
                                     }
                                     _ => {}
