@@ -1003,7 +1003,7 @@ where
 verus! {
 
 impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
-    #[verifier::external_body]
+    // #[verifier::external_body]
     fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> (res: Result<Self, ()>)
         requires
             masks.wf(),
@@ -1012,7 +1012,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
             
         ensures
             res matches Ok(res) ==> {
-                // &&& res.wf()
+                &&& res.wf()
                 &&& {
                     let values_map = verus_utils::map_from_seq(values@);
                     &&& forall |k| values_map.contains_key(k) ==> 
@@ -1206,6 +1206,13 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                             broadcast use SpecTrieHard::lemma_append_path;
                         }
                     }
+
+                    // TODO
+                    assume(match state {
+                        TrieState::Leaf(..) => true,
+                        TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
+                            search.wf(TrieHardSized { nodes, masks }),
+                    });
                 
                     // Show that each new next_spec has certain properties in their path component
                     assert forall |i| #![trigger view_vec_deque(spec_queue)[i]]
@@ -1240,8 +1247,14 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                                     TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
                                         // Check that `next_spec` is a child of the new node
                                         let children = search.view(masks);
+                                        assert(0 <= i - prev_spec_queue_len < children.len());
                                         assert(children[i - prev_spec_queue_len].idx == next_spec.index);
-                                        assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some()) by { admit(); };
+                                        assert(0 <= snd_last < nodes@.len());
+                                        assert((TrieHardSized { nodes, masks })@.nodes[snd_last] is Search);
+                                        assert(next_spec.index == path.last());
+                                        assert((TrieHardSized { nodes, masks })@.nodes[snd_last]->Search_1 == children);
+
+                                        assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some());
                                     }
                                     _ => {}
                                 }
