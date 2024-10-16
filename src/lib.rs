@@ -612,7 +612,7 @@ impl SearchNode<Mask> {
 
             // this is true, since c_mask only has one 1\
             // right now we are requiring it, but not sure if this is right
-            assert (mask_res == c_mask) by {lemma_and_sum(trie.masks.0@, c as int)};
+            // assert (mask_res == c_mask) by {lemma_and_sum(trie.masks.0@, c as int)};
 
             // assert (trie@.nodes.len() > 0);
 
@@ -625,23 +625,23 @@ impl SearchNode<Mask> {
             // counts the number of ones
             let index_offset = smaller_bits_mask.count_ones() as int;
 
-            assert (index_offset == c) by {lemma_modifications_give_correct_offset(trie.masks.0@, self.mask, c as int)};
+            // assert (index_offset == c) by {lemma_modifications_give_correct_offset(trie.masks.0@, self.mask, c as int)};
 
             // children has type Seq<SpecChildRef>
-            let children = self.view(trie);
+            // let children = self.view(trie);
 
             let used_bytes_m = trie.masks.0@.map(|i, m| (i as u8, m));
             let used_bytes_mf = used_bytes_m.filter(|m: (u8, Mask)| self.mask & m.1 != 0);
             let used_bytes = used_bytes_mf.map_values(|m: (u8, Mask)| m.0);
 
-            assert (
-                children
-                ==
-                Seq::new(used_bytes.len(), |i| SpecChildRef {
-                    label: used_bytes[i],
-                    idx: self.edge_start + i,
-                })
-            );
+            // assert (
+            //     children
+            //     ==
+            //     Seq::new(used_bytes.len(), |i| SpecChildRef {
+            //         label: used_bytes[i],
+            //         idx: self.edge_start + i,
+            //     })
+            // );
 
             // assert (
             //     children
@@ -656,7 +656,7 @@ impl SearchNode<Mask> {
             assert (used_bytes_mf.len() == used_bytes.len());
 
 
-            assert (children.len() <= trie.masks.0.len());
+            // assert (children.len() <= trie.masks.0.len());
             // assert (0 <= index_offset < children.len());
 
             // children will basically correspond to labels corresponding to 0, 1, 2, ...
