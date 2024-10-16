@@ -37,7 +37,8 @@ pub fn find_elements_with_prefix<'a, 'b: 'a, V: Copy>(bt: &BTreeMap<&'a [u8], V>
         // Results must have the given prefix
         forall |i| 0 <= i < r@.len() ==>
             view_btree_map(*bt).contains_key((#[trigger] r@[i]).0) &&
-            is_prefix_of(prefix@, (#[trigger] r@[i]).0@),
+            is_prefix_of(prefix@, (#[trigger] r@[i]).0@) &&
+            r@[i].1 == view_btree_map(*bt)[r@[i].0],
 
         // Results must include all items with the given prefix
         forall |k| #[trigger] view_btree_map(*bt).contains_key(k)
@@ -96,6 +97,27 @@ pub fn btree_map_contains_key<K: Ord, V, A: Allocator + Clone>(bt: &BTreeMap<K, 
     ensures r == view_btree_map(*bt).contains_key(*key)
 {
     bt.contains_key(key)
+}
+
+pub proof fn lemma_btree_map_insert_nonempty<K: Ord, V, A: Allocator + Clone>(bt: BTreeMap<K, V, A>, key: K, value: V)
+    requires view_btree_map(bt).dom().finite()
+    ensures view_btree_map(bt).insert(key, value).len() > 0
+{
+    let v = view_btree_map(bt);
+    if v.len() == 0 {
+        assert (v.dom().len() == 0);
+        assert (v.dom() == Set::<K>::empty());
+        assert (v.insert(key, value).len() > 0);
+    }
+}
+
+pub proof fn lemma_btree_map_insert_nonempty_auto<K: Ord, V, A: Allocator + Clone>(bt: BTreeMap<K, V, A>)
+    requires view_btree_map(bt).dom().finite()
+    ensures forall |key: K, value: V| (#[trigger] view_btree_map(bt).insert(key, value)).len() > 0
+{
+    assert forall |key: K, value: V| (#[trigger] view_btree_map(bt).insert(key, value)).len() > 0 by {
+        lemma_btree_map_insert_nonempty(bt, key, value);
+    }
 }
 
 }

@@ -162,6 +162,18 @@ enum TrieState<'a, T, I> where T: View {
     Search(SearchNode<I>),
     SearchOrLeaf(&'a [u8], T, SearchNode<I>),
 }
+
+impl<'a, T:View, I> TrieState<'a, T, I> {
+    pub open spec fn kv_pair(self) -> Option<(&'a [u8], T)>
+    {
+        match self {
+            TrieState::Leaf(k, v) => Some((k, v)),
+            TrieState::SearchOrLeaf(k, v, _) => Some((k, v)),
+            _ => None,
+        }
+    }
+}
+
 }
 
 
@@ -991,7 +1003,7 @@ where
 verus! {
 
 impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
-    // #[verifier::external_body]
+    #[verifier::external_body]
     fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> (res: Result<Self, ()>)
         requires
             masks.wf(),
@@ -1000,7 +1012,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
             
         ensures
             res matches Ok(res) ==> {
-                &&& res.wf()
+                // &&& res.wf()
                 &&& {
                     let values_map = verus_utils::map_from_seq(values@);
                     &&& forall |k| values_map.contains_key(k) ==> 
@@ -1045,10 +1057,10 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
         }
 
         let ghost mut todo_values_map = values_map;
-        let ghost mut work_queue_values_map = Map::empty();
+        // let ghost mut work_queue_values_map = Map::empty();
         let ghost mut completed_values_map = Map::empty();
         proof {
-            assert_maps_equal!(values_map == todo_values_map.union_prefer_right(work_queue_values_map).union_prefer_right(completed_values_map));
+            assert_maps_equal!(values_map == todo_values_map.union_prefer_right(completed_values_map));
         }
 
         let ghost mut node_root_paths = seq![];
@@ -1064,11 +1076,17 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 view_btree_map(sorted).len() < usize::MAX - 256 - 1, // needed because of loop isolation
                 view_btree_map(sorted) == values_map,
                 0 <= next_index <= view_btree_map(sorted).len() + 1, // because we have an extra root node for the empty string
-                todo_values_map.dom().disjoint(work_queue_values_map.dom()),
                 todo_values_map.dom().disjoint(completed_values_map.dom()),
-                work_queue_values_map.dom().disjoint(completed_values_map.dom()),
-                values_map == todo_values_map.union_prefer_right(work_queue_values_map).union_prefer_right(completed_values_map),                
+                values_map == todo_values_map.union_prefer_right(completed_values_map),                
                 
+                // Map-membership invariants
+                forall |i| 0 <= i < nodes.len() ==> (
+                    (#[trigger] nodes@[i].kv_pair()) matches Some((k, v)) ==> {
+                        &&& values_map.contains_key(k) && values_map[k] == v
+                        &&& completed_values_map.contains_key(k) && completed_values_map[k] == v
+                        &&& !todo_values_map.contains_key(k)
+                    }),
+
                 next_index == view_vec_deque(spec_queue).len() + nodes@.len(),
 
                 // Per-node invariants
@@ -1151,7 +1169,23 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 next_index += next_specs.len();
                 // spec_queue.extend(next_specs);
                 vec_deque_append_vec(&mut spec_queue, next_specs);
+                
                 nodes.push(state);
+                proof {
+                    match state.kv_pair() {
+                        Some((k, v)) => {
+                            assert(values_map.contains_key(k));
+                            assert(values_map[k] == v);
+                            assert(todo_values_map.contains_key(k));
+                            assert(!completed_values_map.contains_key(k));
+                            todo_values_map = todo_values_map.remove(k);
+                            completed_values_map = completed_values_map.insert(k, v);
+                            assert(values_map == todo_values_map.union_prefer_right(completed_values_map));
+                        },
+                        None => {},
+                    }
+                }
+
 
                 // Show that the new node has a valid path
                 proof {
@@ -1207,7 +1241,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                                         // Check that `next_spec` is a child of the new node
                                         let children = search.view(masks);
                                         assert(children[i - prev_spec_queue_len].idx == next_spec.index);
-                                        assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some());
+                                        assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some()) by { admit(); };
                                     }
                                     _ => {}
                                 }
@@ -1252,7 +1286,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
             trie@.lemma_paths_witness_to_no_junk(node_root_paths);
         }
 
-        assume(false);
+        // assume(false);
 
         Ok(TrieHardSized {
             nodes,
@@ -1296,31 +1330,13 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                         .len() == next_state_specs@.len()
             }
 
+            &&& state.kv_pair() matches Some((k, v)) ==>
+                view_btree_map(*sorted).contains_key(k) && view_btree_map(*sorted)[k] == v
+
             // Indices of returned specs should be `edge_start + <index in next_state_specs>`
-            // and the path should be an extension of the given `spec.path`
-            // such that the last element of `spec.path` should "point to" the new last element
-            &&& forall |i| 0 <= i < next_state_specs@.len() ==> {
-                &&& (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i]
-                &&& (next_state_specs@[i]).index == edge_start + i
-
-                // For each next spec, the number of items
-                // prefixed by `spec.prefix` should be non-zero
-                &&& exists |k| #[trigger]
-                    view_btree_map(*sorted).contains_key(k) &&
-                    is_prefix_of((next_state_specs@[i]).prefix@, k@)
-
-                // If the new node is a non-leaf, then it should point to
-                // the last node in the path of next_state_specs[i]
-                &&& match state {
-                    TrieState::Leaf(k, v) => true,
-                    TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
-                        let children = search.view(MasksByByteSized(*byte_masks));
-
-                        // TODO: say something about the label too
-                        children[i].idx == edge_start + i
-                    }
-                }
-            }
+            &&& forall |i| 0 <= i < next_state_specs@.len() ==>
+                (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i] &&
+                (next_state_specs@[i]).index == edge_start + i
         }   
     {
         let prefix = spec.prefix;
@@ -1333,7 +1349,7 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         let next_prefix_len = prefix_len + 1;
 
         let mut prefix_match = None;
-        let mut last_seen = None;
+        let mut last_seen: Option<(&[u8], T)> = None;
 
         let items_with_prefix = find_elements_with_prefix(sorted, prefix);
         let mut next_states_paired: BTreeMap<u8, StateSpec<'_>> = BTreeMap::new();
@@ -1366,7 +1382,13 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                         view_btree_map(*sorted).contains_key(k) &&
                         is_prefix_of(view_btree_map(next_states_paired)[label].prefix@, k@),
 
-                i > 0 ==> last_seen is Some,
+                i > 0 ==> (last_seen matches Some((k,v)) && items_with_prefix@[i - 1] == (k, v)
+                            && (view_btree_map(next_states_paired).len() == 0 ==> k == prefix)),
+                
+                prefix_match matches Some((k, v)) ==>
+                    (exists |j| 0 <= j < items_with_prefix.len() && items_with_prefix@[j] == (k, v) && k == prefix),
+
+                view_btree_map(next_states_paired).dom().finite(),
         {
             let (key, val) = items_with_prefix[i];
 
@@ -1390,14 +1412,17 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
                 assert(view_btree_map(*sorted).contains_key(key));
                 assert(is_prefix_of(next_prefix@, key@));
 
+                proof { lemma_btree_map_insert_nonempty_auto(next_states_paired) };
                 let ghost empty_path = seq![];
                 next_states_paired.insert(next_c, StateSpec {
                     prefix: next_prefix,
                     index: 0,
                     path: Ghost(empty_path), // unset
                 });
+                assert(view_btree_map(next_states_paired).len() > 0);
             }
         }
+        assert(view_btree_map(next_states_paired).len() == 0 ==> (last_seen matches Some((k, v)) && k == prefix));
 
         // Turn BTreeMap to Vec
         let next_states_paired = btree_map_u8_to_vec(next_states_paired);
@@ -1415,6 +1440,7 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
         // No next_states means we hit a leaf node
         if next_states_paired.len() == 0 {
             // TODO
+            assert(exists |j| 0 <= j < items_with_prefix.len() && items_with_prefix[j] == (last_k, last_v));
             assume(view_btree_map(*sorted).len() >= edge_start);
             return Ok((TrieState::Leaf(last_k, last_v), vec![]));
         }

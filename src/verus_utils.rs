@@ -9,7 +9,9 @@ pub type Mask = u16;
 
 #[verifier::external_body]
 pub(crate) fn slice_eq<T: PartialEq>(a: &[T], b: &[T]) -> (res: bool)
-    ensures res == (a@ == b@)
+    ensures 
+        res == (a@ == b@),
+        res == (a == b),
 {
     a == b
 }
