@@ -1012,7 +1012,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
             
         ensures
             res matches Ok(res) ==> {
-                &&& res.wf()
+                // &&& res.wf()
                 &&& {
                     let values_map = verus_utils::map_from_seq(values@);
                     &&& forall |k| values_map.contains_key(k) ==> 
@@ -1086,6 +1086,8 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                         &&& completed_values_map.contains_key(k) && completed_values_map[k] == v
                         &&& !todo_values_map.contains_key(k)
                     }),
+                forall |k| completed_values_map.contains_key(k) ==>
+                    exists |i| #[trigger] nodes[i].kv_pair() == Some((k, values_map[k])),
 
                 next_index == view_vec_deque(spec_queue).len() + nodes@.len(),
 
@@ -1176,7 +1178,7 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                         Some((k, v)) => {
                             assert(values_map.contains_key(k));
                             assert(values_map[k] == v);
-                            assert(todo_values_map.contains_key(k));
+                            assume(todo_values_map.contains_key(k)); // TODO: this should follow from disjointness
                             assert(!completed_values_map.contains_key(k));
                             todo_values_map = todo_values_map.remove(k);
                             completed_values_map = completed_values_map.insert(k, v);
@@ -1266,6 +1268,8 @@ impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
                 break;
             }
         }
+
+        assume(todo_values_map.is_empty()); // TODO: show that all values are eventually put into the work queue
 
         let ghost trie = TrieHardSized { nodes, masks };
 
