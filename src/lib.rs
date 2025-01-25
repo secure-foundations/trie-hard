@@ -20,24 +20,22 @@
     unsafe_code
 )]
 #![warn(rust_2018_idioms)]
-#![cfg_attr(any(verus_keep_ghost, feature = "allocator"), feature(allocator_api))]
+#![allow(unexpected_cfgs)]
+// #![cfg_attr(any(verus_keep_ghost, feature = "allocator"), feature(allocator_api))]
 
 mod u256;
 mod specs;
-mod verus_utils;
-mod btree_map;
-mod vec_deque;
+mod utils;
 
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::RangeFrom,
 };
-use verus_utils::*;
-use vstd::{prelude::*, slice::*, assert_seqs_equal, assert_maps_equal, assert_maps_equal_internal,};
-use specs::*;
-use btree_map::*;
-use vec_deque::*;
 
+#[allow(unused_imports)]
+use vstd::{prelude::*, slice::*, assert_seqs_equal, assert_maps_equal, assert_maps_equal_internal,};
+#[allow(unused_imports)]
+use specs::*;
 
 use u256::U256;
 
@@ -56,7 +54,7 @@ impl MasksByByteSized<Mask> {
                 0 <= i < self.0.len() &&
                 0 <= j < self.0.len() && i != j
                 ==> self.0[i] & self.0[j] == 0
-        
+
         // Non-zero elements are sorted
         &&& forall |i, j| #![trigger self.0[i], self.0[j]]
                 0 <= i < j < self.0.len() &&
@@ -138,17 +136,12 @@ where
 
 /// StateSpec in the original version not ported to Verus
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct StateSpecOld<'a> {
+struct StateSpec<'a> {
     prefix: &'a [u8],
     index: usize,
 }
 
 verus! {
-struct StateSpec<'a> {
-    prefix: &'a [u8],
-    index: usize,
-    path: Ghost<Seq<int>>, // Path from root to the current node
-}
 
 #[derive(Debug, Clone)]
 struct SearchNode<I> {
@@ -215,7 +208,7 @@ pub enum TrieHard<'a, T> where T: View {
     U256(TrieHardSized<'a, T, U256>),
 }
 
-impl<'a, T> Default for TrieHard<'a, T> 
+impl<'a, T> Default for TrieHard<'a, T>
 where T: View
 {
     fn default() -> Self {
@@ -262,12 +255,12 @@ where
 
         let masks = MasksByByte::new(used_bytes);
         // should give a bijection from bytes to masks
-        // for now, `requires used_bytes.len() <= 8` to do only the U8 mask case 
+        // for now, `requires used_bytes.len() <= 8` to do only the U8 mask case
 
 
         match masks {
             MasksByByte::U8(masks) => {
-                TrieHard::U8(TrieHardSized::<'_, _, u8>::new(masks, values).unwrap())
+                TrieHard::U8(TrieHardSized::<'_, _, u8>::new(masks, values))
             }
             MasksByByte::U16(masks) => {
                 TrieHard::U16(TrieHardSized::<'_, _, u16>::new(masks, values))
@@ -425,7 +418,7 @@ pub struct TrieIterSized<'b, 'a, T, I> where T: View {
     trie: &'b TrieHardSized<'a, T, I>,
 }
 
-impl<'b, 'a, T, I> TrieIterSized<'b, 'a, T, I> 
+impl<'b, 'a, T, I> TrieIterSized<'b, 'a, T, I>
     where T: View
 {
     fn empty(trie: &'b TrieHardSized<'a, T, I>) -> Self {
@@ -479,7 +472,7 @@ where
 }
 
 /////////////////////////////////////////////////////////////////////////////////////
-// Manual expansion of the `trie_impls!` macro for type u8 
+// Manual expansion of the `trie_impls!` macro for type u8
 
 verus! {
 
@@ -523,9 +516,9 @@ impl SearchNode<Mask> {
 
     // preserves inequalities over the map filter map sequence
     proof fn lemma_map_filter_map_inequality(self, s : [Mask; 256])
-        requires 
+        requires
             forall |i : int, j : int| 0 <= i < j < s.len() ==> s[i] < s[j],
-        ensures 
+        ensures
             ({
                 let s_mfm = s@.map(|i, m| (i as u8, m))
                             .filter(|m: (u8, Mask)| self.mask & m.1 != 0);
@@ -537,8 +530,8 @@ impl SearchNode<Mask> {
         let s_mf = s_m.filter(|m: (u8, Mask)| self.mask & m.1 != 0);
 
         assert forall |i : int, j : int| #![trigger s_mf[i], s_mf[j]] 0 <= i < j < s_mf.len() implies s_mf[i].0 < s_mf[j].0 by {
-            assert (exists |i_ : int, j_ : int| 0 <= i_ < j_ < s_m.len() && s_mf[i] == s_m[i_] && s_mf[j] == s_m[j_]) 
-                by {verus_utils::lemma_filter_ordering(s_m, |m: (u8, Mask)| self.mask & m.1 != 0, i, j)};
+            assert (exists |i_ : int, j_ : int| 0 <= i_ < j_ < s_m.len() && s_mf[i] == s_m[i_] && s_mf[j] == s_m[j_])
+                by {utils::lemma_filter_ordering(s_m, |m: (u8, Mask)| self.mask & m.1 != 0, i, j)};
             }
     }
 
@@ -676,7 +669,7 @@ impl SearchNode<Mask> {
 
         }
 
-   
+
         admit();
     }
 
@@ -684,7 +677,7 @@ impl SearchNode<Mask> {
     // result == None ==> self has no child corresponding to c
     // #[verifier::external_body]
     fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, Mask>) -> (res: Option<usize>)
-        requires 
+        requires
             trie.wf(),
             self.wf(*trie),
             // self.mask == trie.masks.0@.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask),
@@ -706,7 +699,7 @@ impl SearchNode<Mask> {
         let ghost children = self.view(trie.masks);
 
         proof {
-            broadcast use verus_utils::lemma_filter_equiv_pred;
+            broadcast use utils::lemma_filter_equiv_pred;
             SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
         }
 
@@ -724,10 +717,10 @@ impl SearchNode<Mask> {
         } else {
             let ghost used_bytes = trie.masks.0@
                 .map(|i, m| (i as u8, m))
-                .filter(|m: (u8, Mask)| 
+                .filter(|m: (u8, Mask)|
                     trie.masks.0@[m.0 as int] == m.1 && // invariant from map
                     self.mask & m.1 != 0);
-            
+
             // Since c_mask is also an element of trie.masks
             assert(forall |i| #![trigger used_bytes[i]] 0 <= i < used_bytes.len()
                 ==> used_bytes[i].1 & c_mask == 0);
@@ -780,7 +773,7 @@ impl<'a, T: View> TrieHardSized<'a, T, Mask>
 impl<'a, T> TrieHardSized<'a, T, Mask>
 where
     T: Copy + View
-{   
+{
     /// Get the value stored for the given byte-slice key.
     /// ```
     /// # use trie_hard::TrieHard;
@@ -818,12 +811,12 @@ where
         let ghost empty_seq: Seq<u8> = seq![];
         assert(key@.take(i as int) == empty_seq);
 
-        while i < key.len() 
-            invariant 
+        while i < key.len()
+            invariant
                 0 <= i <= key.len(),
                 0 <= state_index < self@.nodes.len(),
                 self@.nodes.len() > 0,
-                
+
                 self.wf(),
                 self@.wf_prefix(key@.take(i as int), state_index),
                 self@.get(key@) == self@.get_helper(key@, i as int, state_index),
@@ -836,15 +829,15 @@ where
                 TrieState::Leaf(k, value) => {
                     // return (
                     //     k.len() == key.len()
-                    //     && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
+                    //     && utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len()))
                     // ).then_some(*value)
-                    
-                    if k.len() == key.len() && verus_utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len())) {
-                        assert(k@ =~= key@) by { 
+
+                    if k.len() == key.len() && utils::slice_eq(slice_subrange(k, i, k.len()), slice_subrange(key, i, key.len())) {
+                        assert(k@ =~= key@) by {
                             assert(k@.skip(i as int) =~= key@.skip(i as int));
                             assert(k@.take(i as int) =~= key@.take(i as int)); // TODO needs to come from some well-formedness property
-                            verus_utils::lemma_seq_take_append_skip(k@, i as int);
-                            verus_utils::lemma_seq_take_append_skip(key@, i as int);
+                            utils::lemma_seq_take_append_skip(k@, i as int);
+                            utils::lemma_seq_take_append_skip(key@, i as int);
                             assert_seqs_equal!(k@ == key@);  // TODO this should follow from sequence reasoning but Verus seems to not get it?
                         };
                         return Some(*value)
@@ -859,7 +852,7 @@ where
                         let children = search.view(self.masks);
                         SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
                     }
-                    
+
                     search.evaluate(c, self)
                 }
             };
@@ -894,7 +887,7 @@ where
         }
     }
 
-}   
+}
 }
 
 impl<'a, T> TrieHardSized<'a, T, Mask>
@@ -1000,610 +993,117 @@ where
     }
 }
 
-verus! {
-
 impl<'a, T> TrieHardSized<'a, T, Mask> where T: 'a + Copy + View {
-    // #[verifier::external_body]
-    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> (res: Result<Self, ()>)
-        requires
-            masks.wf(),
-            // NOTE: the case where values.len() == 0 is handled by `TrieHard::new`
-            1 <= values@.len() < usize::MAX - 256 - 1,
-            
-        ensures
-            res matches Ok(res) ==> {
-                // &&& res.wf()
-                &&& {
-                    let values_map = verus_utils::map_from_seq(values@);
-                    &&& forall |k| values_map.contains_key(k) ==> 
-                        (#[trigger] res@.get_alt(k@)) == Some(values_map[k]@)
-                    &&& forall |k| !values_map.contains_key(k) ==>
-                        (#[trigger] res@.get_alt(k@)) is None
-                }
-            }
-    {
-        // let values = values.into_iter().collect::<Vec<_>>();
-        // let sorted = values
-        //     .iter()
-        //     .map(|(k, v)| (*k, *v))
-        //     .collect::<BTreeMap<_, _>>();
-
-        let sorted = new_btree_map(values);
-        let ghost values_map = verus_utils::map_from_seq(values@);
-        assert(
-            view_btree_map(sorted).len() != 0 &&
-            view_btree_map(sorted).len() <= values@.len()
-        ) by {
-            verus_utils::lemma_map_from_seq_len(values@);
-        }
+    fn new(masks: MasksByByteSized<Mask>, values: Vec<(&'a [u8], T)>) -> Self {
+        let values = values.into_iter().collect::<Vec<_>>();
+        let sorted = values
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect::<BTreeMap<_, _>>();
 
         let mut nodes = Vec::new();
         let mut next_index = 1;
 
-        let ghost root_path = seq![0];
         let root_state_spec = StateSpec {
             prefix: &[],
             index: 0,
-            path: Ghost(root_path),
         };
 
-        // need to axiomatize the work queue
         let mut spec_queue = VecDeque::new();
         spec_queue.push_back(root_state_spec);
 
-        proof {
-            let trie_hard = TrieHardSized { nodes, masks };
-            assert(trie_hard.wf());
+        while let Some(spec) = spec_queue.pop_front() {
+            debug_assert_eq!(spec.index, nodes.len());
+            let (state, next_specs) = TrieState::<'_, _, Mask>::new(
+                spec,
+                next_index,
+                &masks.0,
+                &sorted,
+            );
+
+            next_index += next_specs.len();
+            spec_queue.extend(next_specs);
+            nodes.push(state);
         }
 
-        let ghost mut todo_values_map = values_map;
-        // let ghost mut work_queue_values_map = Map::empty();
-        let ghost mut completed_values_map = Map::empty();
-        proof {
-            assert_maps_equal!(values_map == todo_values_map.union_prefer_right(completed_values_map));
-        }
-
-        let ghost mut node_root_paths = seq![];
-
-        // Since view_btree_map(sorted) is non-empty, we can choose a key from the domain
-        let ghost chosen_key = view_btree_map(sorted).dom().choose();
-        assert(view_btree_map(sorted).contains_key(chosen_key));
-
-        loop 
-            invariant
-                forall |i| 0 <= i < view_vec_deque(spec_queue).len()
-                    ==> (#[trigger] view_vec_deque(spec_queue)[i]).prefix@.len() < usize::MAX,
-                view_btree_map(sorted).len() < usize::MAX - 256 - 1, // needed because of loop isolation
-                view_btree_map(sorted) == values_map,
-                0 <= next_index <= view_btree_map(sorted).len() + 1, // because we have an extra root node for the empty string
-                todo_values_map.dom().disjoint(completed_values_map.dom()),
-                values_map == todo_values_map.union_prefer_right(completed_values_map),                
-                
-                // Map-membership invariants
-                forall |i| 0 <= i < nodes.len() ==> (
-                    (#[trigger] nodes@[i].kv_pair()) matches Some((k, v)) ==> {
-                        &&& values_map.contains_key(k) && values_map[k] == v
-                        &&& completed_values_map.contains_key(k) && completed_values_map[k] == v
-                        &&& !todo_values_map.contains_key(k)
-                    }),
-                forall |k| completed_values_map.contains_key(k) ==>
-                    exists |i| #[trigger] nodes[i].kv_pair() == Some((k, values_map[k])),
-
-                next_index == view_vec_deque(spec_queue).len() + nodes@.len(),
-
-                // Per-node invariants
-                forall |i| 0 <= i < nodes@.len() ==> match #[trigger] nodes@[i] {
-                    TrieState::Leaf(..) => true,
-                    TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
-                        &&& search.wf(TrieHardSized { nodes, masks })
-
-                        // Implies wf_acyclic at the end
-                        &&& search.edge_start > i
-                        
-                        // Child indices stay within bound
-                        &&& search.edge_start + search.view(masks).len() <=
-                            view_vec_deque(spec_queue).len() + nodes@.len()
-                    }
-                },
-
-                // Each node in the queue will be added to the node list with
-                // index `nodes@.len() + <index in queue>`
-                forall |i| 0 <= i < view_vec_deque(spec_queue).len() ==>
-                    (#[trigger] view_vec_deque(spec_queue)[i]).path@.len() >= 1 &&
-                    view_vec_deque(spec_queue)[i].path@.last() == nodes@.len() + i &&
-                    view_vec_deque(spec_queue)[i].index == nodes@.len() + i,
-
-                // Each state spec in the queue has a valid path prefix
-                // and the second to last element of the path should point to the last element
-                // in the `SpecTrieHard::is_parent_of` relation
-                forall |i| #![trigger view_vec_deque(spec_queue)[i]]
-                    0 <= i < view_vec_deque(spec_queue).len() ==> {
-                        let path = view_vec_deque(spec_queue)[i].path@;
-                        let snd_last = path[path.len() - 2];
-
-                        ||| path.len() == 1 && path =~= seq![0]
-                        ||| {
-                            &&& path.len() > 1
-                            &&& (TrieHardSized { nodes, masks })@.nodes[snd_last] is Search
-                            &&& (TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some()
-                            &&& (TrieHardSized { nodes, masks })@.is_path(path.drop_last(), 0, snd_last)
-                        }
-                    },
-
-                // For each spec in the queue, there has to be
-                // at least one entry in `sorted` with `spec.prefix`
-                forall |i| #![trigger view_vec_deque(spec_queue)[i]]
-                    0 <= i < view_vec_deque(spec_queue).len() ==> 
-                    exists |k| #[trigger]
-                        view_btree_map(sorted).contains_key(k) &&
-                        is_prefix_of(view_vec_deque(spec_queue)[i].prefix@, k@),
-
-                // Exists a path from the root to each node
-                node_root_paths.len() == nodes@.len(),
-                
-                forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
-                    (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i),
-
-                masks.wf(),
-            
-            ensures
-                view_vec_deque(spec_queue).len() == 0,
-
-                forall |i| #![trigger node_root_paths[i]] 0 <= i < nodes@.len() ==>
-                    (TrieHardSized { nodes, masks })@.is_path(node_root_paths[i], 0, i),
-        {   
-            if let Some(spec) = spec_queue.pop_front() {
-                // debug_assert_eq!(spec.index, nodes.len());
-                let ghost prev_spec_queue = spec_queue;
-                let ghost prev_nodes = nodes;
-
-                assert(exists |k| #[trigger]
-                    view_btree_map(sorted).contains_key(k) &&
-                    is_prefix_of(spec.prefix@, k@));
-
-                let (state, next_specs) = TrieState::<'_, _, Mask>::new(
-                    spec,
-                    next_index,
-                    &masks.0,
-                    &sorted,
-                )?;
-
-                next_index += next_specs.len();
-                // spec_queue.extend(next_specs);
-                vec_deque_append_vec(&mut spec_queue, next_specs);
-                
-                nodes.push(state);
-                proof {
-                    match state.kv_pair() {
-                        Some((k, v)) => {
-                            assert(values_map.contains_key(k));
-                            assert(values_map[k] == v);
-                            assume(todo_values_map.contains_key(k)); // TODO: this should follow from disjointness
-                            assert(!completed_values_map.contains_key(k));
-                            todo_values_map = todo_values_map.remove(k);
-                            completed_values_map = completed_values_map.insert(k, v);
-                            assert(values_map == todo_values_map.union_prefer_right(completed_values_map));
-                        },
-                        None => {},
-                    }
-                }
-
-
-                // Show that the new node has a valid path
-                proof {
-                    node_root_paths = node_root_paths + seq![spec.path@];
-
-                    // Automatically deduce that extending `nodes` would not
-                    // make previously valid paths invalid
-                    broadcast use SpecTrieHard::lemma_extension_preserves_valid_paths;
-        
-                    // `spec.path` is a valid path now that we've added the node
-                    assert((TrieHardSized { nodes, masks })@.is_path(spec.path@, 0, spec.index as int)) by {
-                        if spec.path@.len() > 1 {
-                            let path_prefix = spec.path@.drop_last();
-                            let snd_last = spec.path@[spec.path@.len() - 2];
-
-                            assert((TrieHardSized { nodes, masks })@.is_path(path_prefix, 0, snd_last));
-                            assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, spec.index as int).is_some());
-                            broadcast use SpecTrieHard::lemma_append_path;
-                        }
-                    }
-
-                    // TODO
-                    assume(match state {
-                        TrieState::Leaf(..) => true,
-                        TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
-                            search.wf(TrieHardSized { nodes, masks }),
-                    });
-                
-                    // Show that each new next_spec has certain properties in their path component
-                    assert forall |i| #![trigger view_vec_deque(spec_queue)[i]]
-                        0 <= i < view_vec_deque(spec_queue).len() implies {
-                            let path = view_vec_deque(spec_queue)[i].path@;
-                            let snd_last = path[path.len() - 2];
-
-                            ||| path.len() == 1 && path =~= seq![0]
-                            ||| {
-                                &&& path.len() > 1
-                                &&& (TrieHardSized { nodes, masks })@.nodes[snd_last] is Search
-                                &&& (TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some()
-                                &&& (TrieHardSized { nodes, masks })@.is_path(path.drop_last(), 0, snd_last)
-                            }
-                        }
-                    by {
-                        let prev_spec_queue_len = view_vec_deque(prev_spec_queue).len();
-                        if i >= prev_spec_queue_len {
-                            assert(view_vec_deque(spec_queue)[i] == next_specs@[i - prev_spec_queue_len]);
-
-                            let next_spec = view_vec_deque(spec_queue)[i];
-                            let path = next_spec.path@;
-                            let snd_last = path[path.len() - 2];
-
-                            if path.len() > 1 {
-                                // The second to last element should be the new node corresponding to `spec`
-                                assert(snd_last == spec.index);
-                                assert((TrieHardSized { nodes, masks })@.nodes[snd_last] is Search);
-
-                                // And it must be a search node to have children
-                                match nodes@[snd_last] {
-                                    TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) => {
-                                        // Check that `next_spec` is a child of the new node
-                                        let children = search.view(masks);
-                                        assert(0 <= i - prev_spec_queue_len < children.len());
-                                        assert(children[i - prev_spec_queue_len].idx == next_spec.index);
-                                        assert(0 <= snd_last < nodes@.len());
-                                        assert((TrieHardSized { nodes, masks })@.nodes[snd_last] is Search);
-                                        assert(next_spec.index == path.last());
-                                        assert((TrieHardSized { nodes, masks })@.nodes[snd_last]->Search_1 == children);
-
-                                        assert((TrieHardSized { nodes, masks })@.is_parent_of(snd_last, path.last()).is_some());
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-
-        assume(todo_values_map.is_empty()); // TODO: show that all values are eventually put into the work queue
-
-        let ghost trie = TrieHardSized { nodes, masks };
-
-        assert(trie@.wf_acyclic());
-        assert(trie@.wf_distinct_children()) by {
-            // This is true as long as the masks are well-formed
-            // (i.e. does not depend on any loop invariant except for `search.wf(trie)`)
-            assert forall |i|
-                0 <= i < trie@.nodes.len() implies
-                match #[trigger] trie@.nodes[i] {
-                    SpecTrieState::Leaf(..) => true,
-                    SpecTrieState::Search(_, children) => {
-                        forall |j, k| #![trigger children[j], children[k]]
-                            0 <= j < children.len() && 0 <= k < children.len() && j != k ==>
-                            children[j].label != children[k].label
-                    }
-                }
-            by {
-                match trie@.nodes[i] {
-                    SpecTrieState::Search(_, children) => {
-                        if let TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) = nodes@[i] {
-                            search.lemma_wf_search_view_disjointness(trie);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        };
-
-        assert(trie@.wf_no_junk()) by {
-            trie@.lemma_paths_witness_to_no_junk(node_root_paths);
-        }
-
-        // assume(false);
-
-        Ok(TrieHardSized {
+        TrieHardSized {
             nodes,
             masks,
-        })
+        }
     }
 }
 
 impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
-    // #[verifier::external_body]
     fn new(
         spec: StateSpec<'a>,
         edge_start: usize,
         byte_masks: &[Mask; 256],
         sorted: &BTreeMap<&'a [u8], T>,
-    ) -> (res: Result<(Self, Vec<StateSpec<'a>>), ()>)
-        requires
-            edge_start <= usize::MAX - 256,
+    ) -> (Self, Vec<StateSpec<'a>>) {
+        let StateSpec { prefix, .. } = spec;
 
-            // There must be some elements in the sorted map with the given prefix
-            exists |k| #[trigger] view_btree_map(*sorted).contains_key(k) && is_prefix_of(spec.prefix@, k@),
-
-            MasksByByteSized(*byte_masks).wf(),
-
-        ensures res matches Ok((state, next_state_specs)) ==> {
-            &&& next_state_specs@.len() <= view_btree_map(*sorted).len() - edge_start
-            &&& forall |i| 0 <= i < next_state_specs@.len()
-                    ==> (#[trigger] next_state_specs@[i]).prefix@.len() < usize::MAX
-
-            // Required for wf_acyclic
-            &&& match state {
-                TrieState::Leaf(..) => next_state_specs@.len() == 0,
-                TrieState::Search(search) | TrieState::SearchOrLeaf(_, _, search) =>
-                    search.edge_start == edge_start &&
-                    
-                    // Similar to the body of SearchNode::view
-                    // requires some BV reasoning
-                    byte_masks@
-                        .map(|i, m| (i as u8, m))
-                        .filter(|m: (u8, Mask)| search.mask & m.1 != 0)
-                        .len() == next_state_specs@.len()
-            }
-
-            &&& state.kv_pair() matches Some((k, v)) ==>
-                view_btree_map(*sorted).contains_key(k) && view_btree_map(*sorted)[k] == v
-
-            // Indices of returned specs should be `edge_start + <index in next_state_specs>`
-            &&& forall |i| 0 <= i < next_state_specs@.len() ==>
-                (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i] &&
-                (next_state_specs@[i]).index == edge_start + i
-        }   
-    {
-        let prefix = spec.prefix;
         let prefix_len = prefix.len();
-
-        if prefix_len >= usize::MAX - 1 {
-            return Err(());
-        }
-
         let next_prefix_len = prefix_len + 1;
 
         let mut prefix_match = None;
-        let mut last_seen: Option<(&[u8], T)> = None;
+        let mut children_seen = 0;
+        let mut last_seen = None;
 
-        let items_with_prefix = find_elements_with_prefix(sorted, prefix);
-        let mut next_states_paired: BTreeMap<u8, StateSpec<'_>> = BTreeMap::new();
+        let next_states_paired = sorted
+            .range(RangeFrom { start: prefix })
+            .take_while(|(key, _)| key.starts_with(prefix))
+            .filter_map(|(key, val)| {
+                children_seen += 1;
+                last_seen = Some((key, *val));
 
-        let items_with_prefix_len = items_with_prefix.len();
-        assert(items_with_prefix_len > 0);
+                if *key == prefix {
+                    prefix_match = Some((key, *val));
+                    None
+                } else {
+                    // Safety: The byte at prefix_len must exist otherwise we
+                    // would have ended up in the other branch of this statement
+                    let next_c = key.get(prefix_len).unwrap();
+                    let next_prefix = &key[..next_prefix_len];
 
-        for i in 0..items_with_prefix_len
-            invariant
-                forall |j| 0 <= j < items_with_prefix@.len() ==>
-                    is_prefix_of(prefix@, (#[trigger] items_with_prefix@[j]).0@),
-
-                forall |k| #[trigger] view_btree_map(next_states_paired).contains_key(k) ==>
-                    view_btree_map(next_states_paired)[k].prefix@.len() < usize::MAX,
-
-                // `sorted` contains the key of each item in `items_with_prefix`
-                forall |j| 0 <= j < items_with_prefix@.len() ==>
-                    view_btree_map(*sorted).contains_key((#[trigger] items_with_prefix@[j]).0),
-
-                items_with_prefix_len == items_with_prefix@.len(),
-                prefix_len == prefix@.len(),
-                prefix_len < usize::MAX - 1,
-                next_prefix_len == prefix_len + 1,
-
-                // For each next spec (child), the number of items
-                // prefixed by it should be non-zero
-                forall |label|
-                    view_btree_map(next_states_paired).contains_key(label) ==>
-                    exists |k| #[trigger]
-                        view_btree_map(*sorted).contains_key(k) &&
-                        is_prefix_of(view_btree_map(next_states_paired)[label].prefix@, k@),
-
-                i > 0 ==> (last_seen matches Some((k,v)) && items_with_prefix@[i - 1] == (k, v)
-                            && (view_btree_map(next_states_paired).len() == 0 ==> k == prefix)),
-                
-                prefix_match matches Some((k, v)) ==>
-                    (exists |j| 0 <= j < items_with_prefix.len() && items_with_prefix@[j] == (k, v) && k == prefix),
-
-                view_btree_map(next_states_paired).dom().finite(),
-        {
-            let (key, val) = items_with_prefix[i];
-
-            last_seen = Some((key, val));
-
-            if verus_utils::slice_eq(key, prefix) {
-                prefix_match = Some((key, val));
-            } else {
-                assert(key@.len() > prefix@.len()) by {
-                    assert(is_prefix_of(prefix@, key@));
-                    if key@.len() == prefix@.len() {
-                        assert(key@ =~= prefix@);
-                    }
+                    Some((
+                        *next_c,
+                        StateSpec {
+                            prefix: next_prefix,
+                            index: 0,
+                        },
+                    ))
                 }
-
-                // Safety: The byte at prefix_len must exist otherwise we
-                // would have ended up in the other branch of this statement
-                let next_c = key[prefix_len];
-                let next_prefix = slice_take(key, next_prefix_len);
-
-                assert(view_btree_map(*sorted).contains_key(key));
-                assert(is_prefix_of(next_prefix@, key@));
-
-                proof { lemma_btree_map_insert_nonempty_auto(next_states_paired) };
-                let ghost empty_path = seq![];
-                next_states_paired.insert(next_c, StateSpec {
-                    prefix: next_prefix,
-                    index: 0,
-                    path: Ghost(empty_path), // unset
-                });
-                assert(view_btree_map(next_states_paired).len() > 0);
-            }
-        }
-        assert(view_btree_map(next_states_paired).len() == 0 ==> (last_seen matches Some((k, v)) && k == prefix));
-
-        // Turn BTreeMap to Vec
-        let next_states_paired = btree_map_u8_to_vec(next_states_paired);
+            })
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .collect::<Vec<_>>();
 
         // Safety: last_seen will be present because we saw at least one
         //         entry must be present for this function to be called
         let (last_k, last_v) = last_seen.unwrap();
 
-        if items_with_prefix.len() == 1 {
-            // TODO
-            assume(view_btree_map(*sorted).len() >= edge_start);
-            return Ok((TrieState::Leaf(last_k, last_v), vec![]));
+        if children_seen == 1 {
+            return (TrieState::Leaf(last_k, last_v), vec![]);
         }
 
         // No next_states means we hit a leaf node
-        if next_states_paired.len() == 0 {
-            // TODO
-            assert(exists |j| 0 <= j < items_with_prefix.len() && items_with_prefix[j] == (last_k, last_v));
-            assume(view_btree_map(*sorted).len() >= edge_start);
-            return Ok((TrieState::Leaf(last_k, last_v), vec![]));
+        if next_states_paired.is_empty() {
+            return (TrieState::Leaf(last_k, last_v), vec![], );
         }
-        
-        let mut mask = 0;
 
-        // This logic requires that the next_states_paired is sorted 
-        // so that the pairs are stored in sorted order (`edge_start + i`
-        // is always the index of the `i`th child of this node)
+        let mut mask = Default::default();
 
         // Update the index for the next state now that we have ordered by
-        let mut next_state_specs: Vec<StateSpec<'_>> = Vec::new();
-
-        let next_states_paired_len = next_states_paired.len();
-
-        // mask = 0 ==> all byte_masks & mask == 0
-        assert forall |i| 0 <= i < byte_masks@.len() ==>
-            mask & #[trigger] byte_masks@[i] == 0
-        by {
-            let byte_masks_i = byte_masks@[i];
-            assert(mask == 0 ==> mask & byte_masks_i == 0) by (bit_vector);
-        }
-        broadcast use lemma_filter_false_pred;
-
-        for i in 0..next_states_paired_len
-            invariant
-                next_states_paired_len == next_states_paired@.len(),
-                next_states_paired_len <= 256,
-                edge_start <= usize::MAX - 256,
-
-                next_state_specs@.len() == i,
-
-                MasksByByteSized(*byte_masks).wf(),
-
-                // For each `spec` in `next_states_paired`
-                // `spec.prefix` should be the prefix of at least one item in `sorted`
-                forall |i| #![trigger next_states_paired@[i]] 0 <= i < next_states_paired.len() ==>
-                    exists |k| #[trigger]
-                        view_btree_map(*sorted).contains_key(k) &&
-                        is_prefix_of(next_states_paired@[i].1.prefix@, k@),
-                
-                // Similar to above, but for each spec in `next_state_specs`
-                forall |i| #![trigger next_state_specs@[i]] 0 <= i < next_state_specs.len() ==>
-                    exists |k| #[trigger]
-                        view_btree_map(*sorted).contains_key(k) &&
-                        is_prefix_of(next_state_specs@[i].prefix@, k@),
-
-                // A correspondence to correctly trigger quantifiers in `MasksByByteSized::wf`
-                forall |i| 0 <= i < byte_masks@.len() ==>
-                    #[trigger] byte_masks@[i] == MasksByByteSized(*byte_masks).0[i],
-
-                // The masks collected so far should be equal to i
-                byte_masks@
-                    .map(|i, m| (i as u8, m))
-                    .filter(|m: (u8, Mask)| mask & m.1 != 0)
-                    .len() == i,
-
-                // Current mask should be disjoint from all unprocessed elements
-                // in `next_states_paired`
-                forall |j| i <= j < next_states_paired@.len() ==>
-                    mask & byte_masks@[(#[trigger] next_states_paired@[j]).0 as int] == 0,
-
-                // `next_states_paired` should contain items with disjoint keys
-                forall |j, k|
-                    0 <= j < next_states_paired@.len() && 0 <= k < next_states_paired@.len() && j != k
-                    ==>
-                    (#[trigger] next_states_paired@[j]).0 != (#[trigger] next_states_paired@[k]).0,
-
-                // Indices of next_states_paired should be sorted
-                forall |j| 0 <= j < next_states_paired@.len() - 1 ==>
-                    (#[trigger] next_states_paired@[j]).0 < next_states_paired@[j + 1].0,
-
-                // All next prefices should have length < usize::MAX
-                forall |j| 0 <= j < next_states_paired@.len() ==>
-                    (#[trigger] next_states_paired@[j]).1.prefix@.len() < usize::MAX,
-
-                forall |j| 0 <= j < next_state_specs@.len() ==>
-                    (#[trigger] next_state_specs@[j]).prefix@.len() < usize::MAX,
-
-                // Some facts about StateSpec::path
-                forall |i| 0 <= i < next_state_specs@.len() ==>
-                    (#[trigger] next_state_specs@[i]).path@ == spec.path@ + seq![edge_start + i] &&
-                    (next_state_specs@[i]).index == edge_start + i,
-        {
-            let ghost old_mask = mask;
-            let mask_idx = next_states_paired[i].0 as usize;
-            let ghost cur_byte_mask = byte_masks@[mask_idx as int];
-
-            mask |= byte_masks[mask_idx];
-
-            // TODO: add precondition so that this doesn't happen
-            if byte_masks[mask_idx] == 0 {
-                return Err(());
-            }
-
-            // Current mask should be disjoint from rest of the masks yet to be added
-            proof {
-                assert forall |j| i + 1 <= j < next_states_paired@.len() implies
-                    mask & byte_masks@[(#[trigger] next_states_paired@[j]).0 as int] == 0
-                by {
-                    let byte_mask_j = byte_masks@[next_states_paired@[j].0 as int];
-
-                    assert((old_mask | cur_byte_mask) & byte_mask_j == 0) by (bit_vector)
-                        requires
-                            cur_byte_mask & byte_mask_j == 0, // By MasksByByteSized::wf
-                            old_mask & byte_mask_j == 0; // By IH
-                }
-            }
-
-            // Prove the byte_masks length invariant
-            proof {
-                broadcast use lemma_filter_add_one;
-
-                let old_mask_pred = |m: (u8, Mask)| old_mask & m.1 != 0;
-                let new_mask_pred = |m: (u8, Mask)| mask & m.1 != 0;
-                let byte_masks_pairs = byte_masks@.map(|i, m| (i as u8, m));
-
-                // Show that the new mask agrees with the old mask
-                // on all masks in `byte_masks` except for `byte_masks[mask_idx]`
-                assert forall |i| 0 <= i < byte_masks_pairs.len() && i != mask_idx implies
-                    new_mask_pred(byte_masks_pairs[i]) == old_mask_pred(byte_masks_pairs[i])
-                by {
-                    let byte_mask = byte_masks_pairs[i].1;
-                    assert(old_mask & byte_mask == mask & byte_mask) by (bit_vector)
-                        requires
-                            mask == old_mask | cur_byte_mask, // By defn
-                            cur_byte_mask & byte_mask == 0,; // By wf of byte_masks
-                }
-                
-                assert(new_mask_pred(byte_masks_pairs[mask_idx as int])) by {
-                    assert((old_mask | cur_byte_mask) & cur_byte_mask != 0) by (bit_vector)
-                        requires cur_byte_mask != 0; // By dynamic check
-                }
-
-                assert(!old_mask_pred(byte_masks_pairs[mask_idx as int]));
-            }
-
-            let prefix = next_states_paired[i].1.prefix;
-            assert(prefix@.len() < usize::MAX);
-
-            next_state_specs.push(StateSpec {
-                prefix: prefix,
-                index: edge_start + i,
-                path: Ghost(spec.path@ + seq![edge_start + i]),
-            });
-        }
+        let next_state_specs = next_states_paired
+            .into_iter()
+            .enumerate()
+            .map(|(i, (c, mut next_state))| {
+                let next_node = edge_start + i;
+                next_state.index = next_node;
+                mask |= byte_masks[c as usize];
+                next_state
+            })
+            .collect();
 
         let search_node = SearchNode { mask, edge_start };
         let state = match prefix_match {
@@ -1613,13 +1113,8 @@ impl <'a, T> TrieState<'a, T, Mask> where T: 'a + Copy + View {
             _ => TrieState::Search(search_node),
         };
 
-        // TODO
-        assume(next_state_specs@.len() <= view_btree_map(*sorted).len() - edge_start);
-        
-        Ok((state, next_state_specs))
+        (state, next_state_specs)
     }
-}
-
 }
 
 impl MasksByByteSized<Mask> {
@@ -1893,7 +1388,7 @@ macro_rules! trie_impls {
                 let mut nodes = Vec::new();
                 let mut next_index = 1;
 
-                let root_state_spec = StateSpecOld {
+                let root_state_spec = StateSpec {
                     prefix: &[],
                     index: 0,
                 };
@@ -1925,12 +1420,12 @@ macro_rules! trie_impls {
 
         impl <'a, T> TrieState<'a, T, $int_type> where T: 'a + Copy + View {
             fn new(
-                spec: StateSpecOld<'a>,
+                spec: StateSpec<'a>,
                 edge_start: usize,
                 byte_masks: &[$int_type; 256],
                 sorted: &BTreeMap<&'a [u8], T>,
-            ) -> (Self, Vec<StateSpecOld<'a>>) {
-                let StateSpecOld { prefix, .. } = spec;
+            ) -> (Self, Vec<StateSpec<'a>>) {
+                let StateSpec { prefix, .. } = spec;
 
                 let prefix_len = prefix.len();
                 let next_prefix_len = prefix_len + 1;
@@ -1957,7 +1452,7 @@ macro_rules! trie_impls {
 
                             Some((
                                 *next_c,
-                                StateSpecOld {
+                                StateSpec {
                                     prefix: next_prefix,
                                     index: 0,
                                 },

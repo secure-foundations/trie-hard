@@ -1,15 +1,16 @@
+#![allow(dead_code)]
 #![allow(unreachable_pub)]
 
+#[allow(unused_imports)]
 use vstd::{prelude::*, set_lib};
 
 verus!{
 
 pub type Mask = u16;
 
-
 #[verifier::external_body]
 pub(crate) fn slice_eq<T: PartialEq>(a: &[T], b: &[T]) -> (res: bool)
-    ensures 
+    ensures
         res == (a@ == b@),
         res == (a == b),
 {
@@ -43,9 +44,6 @@ pub fn slice_take<V>(s: &[V], n: usize) -> (res: &[V])
 {
     &s[..n]
 }
-
-
-// pub 
 
 pub open spec fn u8_count_ones(i: u8) -> u32
     decreases i
@@ -153,18 +151,18 @@ pub broadcast proof fn lemma_filter_add_one<A>(s: Seq<A>, pred1: spec_fn(A) -> b
 #[verifier::opaque]
 pub open spec fn map_from_seq<K, V>(seq: Seq<(K, V)>) -> Map<K, V>
 {
-    seq.fold_left(Map::empty(), |acc: Map<K, V>, kv: (K, V)| { 
-        let (k, v) = kv; acc.insert(k, v) 
+    seq.fold_left(Map::empty(), |acc: Map<K, V>, kv: (K, V)| {
+        let (k, v) = kv; acc.insert(k, v)
     })
 }
 
-pub proof fn lemma_map_from_seq_len_helper<K, V>(acc: Map<K, V>, seq: Seq<(K, V)>) 
-    requires 
+pub proof fn lemma_map_from_seq_len_helper<K, V>(acc: Map<K, V>, seq: Seq<(K, V)>)
+    requires
         acc.dom().finite()
     ensures
         acc.len()
-            <= seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| { 
-                    let (k, v) = kv; a.insert(k, v) 
+            <= seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| {
+                    let (k, v) = kv; a.insert(k, v)
                 }).len()
             <= acc.len() + seq.len(),
     decreases seq.len()
@@ -177,20 +175,20 @@ pub proof fn lemma_map_from_seq_len_helper<K, V>(acc: Map<K, V>, seq: Seq<(K, V)
         assert(acc.insert(k, v).len() <= acc.len() + 1nat);
         assert(tail.len() == seq.len() - 1nat);
         assert(acc.insert(k, v).len() + tail.len() <= acc.len() + seq.len());
-        let res = tail.fold_left_alt(acc.insert(k, v), |acc: Map<K, V>, kv: (K, V)| { 
-            let (k, v) = kv; acc.insert(k, v) 
+        let res = tail.fold_left_alt(acc.insert(k, v), |acc: Map<K, V>, kv: (K, V)| {
+            let (k, v) = kv; acc.insert(k, v)
         });
         assert(acc.len() <= res.len() <= acc.insert(k, v).len() + tail.len()) by {
             lemma_map_from_seq_len_helper(acc.insert(k, v), tail);
         };
-        assert(res == seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| { 
-            let (k, v) = kv; a.insert(k, v) 
+        assert(res == seq.fold_left_alt(acc, |a: Map<K, V>, kv: (K, V)| {
+            let (k, v) = kv; a.insert(k, v)
         }));
         assert(res.len() <= acc.len() + seq.len());
     }
 }
 
-pub proof fn lemma_map_from_seq_len<K, V>(seq: Seq<(K, V)>) 
+pub proof fn lemma_map_from_seq_len<K, V>(seq: Seq<(K, V)>)
     ensures
         map_from_seq(seq).len() <= seq.len(),
         seq.len() != 0 ==> map_from_seq(seq).len() != 0,
@@ -201,12 +199,12 @@ pub proof fn lemma_map_from_seq_len<K, V>(seq: Seq<(K, V)>)
     if seq.len() != 0 {
         let singleton = Map::empty().insert(seq[0].0, seq[0].1);
         lemma_map_from_seq_len_helper(singleton, seq.drop_first());
-        seq.drop_first().lemma_fold_left_alt(singleton, |acc: Map<K, V>, kv: (K, V)| { 
-            let (k, v) = kv; acc.insert(k, v) 
+        seq.drop_first().lemma_fold_left_alt(singleton, |acc: Map<K, V>, kv: (K, V)| {
+            let (k, v) = kv; acc.insert(k, v)
         });
     }
-    seq.lemma_fold_left_alt(Map::empty(), |acc: Map<K, V>, kv: (K, V)| { 
-        let (k, v) = kv; acc.insert(k, v) 
+    seq.lemma_fold_left_alt(Map::empty(), |acc: Map<K, V>, kv: (K, V)| {
+        let (k, v) = kv; acc.insert(k, v)
     });
 }
 
@@ -221,18 +219,18 @@ pub proof fn lemma_filter_last<A>(s: Seq<A>, pred: spec_fn(A) -> bool,)
         s.filter(pred).last() == s.last()
     decreases s.len()
 {
-    reveal_with_fuel(Seq::<_>::filter, 1); 
+    reveal_with_fuel(Seq::<_>::filter, 1);
     assert (s.filter(pred) == s.drop_last().filter(pred).push(s.last()));
 }
 
 pub proof fn lemma_filter_existential<A>(s: Seq<A>, pred: spec_fn(A) -> bool, i: int)
     requires
         0 <= i < s.filter(pred).len()
-    ensures 
+    ensures
         exists |i_ : int| 0 <= i_ < s.len() && s.filter(pred)[i] == s[i_],
     decreases s.len()
 {
-    reveal_with_fuel(Seq::<_>::filter, 1); 
+    reveal_with_fuel(Seq::<_>::filter, 1);
     if (i == s.filter(pred).len() - 1 && pred(s.last())) {
         assert (s.filter(pred).last() == s.last()) by {lemma_filter_last(s, pred)};
     } else {
@@ -243,11 +241,11 @@ pub proof fn lemma_filter_existential<A>(s: Seq<A>, pred: spec_fn(A) -> bool, i:
 pub proof fn lemma_filter_ordering<A>(s: Seq<A>, pred: spec_fn(A) -> bool, i: int, j : int)
     requires
         0 <= i < j < s.filter(pred).len()
-    ensures 
+    ensures
         exists |i_ : int, j_ : int| 0 <= i_ < j_ < s.len() && s.filter(pred)[i] == s[i_] && s.filter(pred)[j] == s[j_],
     decreases s.len()
-{  
-    reveal_with_fuel(Seq::<_>::filter, 1);   
+{
+    reveal_with_fuel(Seq::<_>::filter, 1);
     if (j == s.filter(pred).len() - 1 && pred(s.last())) {
         lemma_filter_existential(s.drop_last(), pred, i)
     } else {
@@ -266,8 +264,8 @@ pub proof fn lemma_and_sum(masks : Seq<Mask>, c : int)
             0 <= i < j < masks.len() &&
             masks[i] != 0 && masks[j] != 0
             ==> masks[i] < masks[j],
-    ensures 
-        (masks.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask)) 
+    ensures
+        (masks.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask))
             & masks[c] == #[trigger] masks[c]
 {
     admit()

@@ -14,7 +14,7 @@ verus! {
  *    - Abstracts away the masks
  */
 
-pub type SpecMap<T> = Map<Seq<u8>, T>;
+// pub type SpecMap<T> = Map<Seq<u8>, T>;
 
 pub struct SpecChild<T> {
     pub label: u8,
@@ -165,7 +165,7 @@ pub proof fn lemma_diff_seq<S>(s1: Seq<S>, s2: Seq<S>)
 {
     if s1.len() != 0 && s2.len() != 0 && s1[0] == s2[0] {
         lemma_diff_seq(s1.drop_first(), s2.drop_first());
-        
+
         let diff = diff_seq(s1, s2);
         assert(s1.take(diff) =~= seq![s1[0]] + s1.drop_first().take(diff - 1));
         assert(s2.take(diff) =~= seq![s2[0]] + s2.drop_first().take(diff - 1));
@@ -198,7 +198,7 @@ impl<T> SpecTrieHard<T> {
             }
         }
     }
-    
+
     /// Each child's label is unique
     pub open spec fn wf_distinct_children(self) -> bool
     {
@@ -278,7 +278,7 @@ impl<T> SpecTrieHard<T> {
             }
         }
     }
-    
+
     /// Search from the subtree at i
     pub open spec fn get_helper(self, key: Seq<u8>, depth: int, i: int) -> Option<T>
         decreases self.nodes.len() - i
@@ -363,7 +363,7 @@ impl<T> SpecTrieHard<T> {
 
             Self::find_children(prefix, children).is_none() ==>
                 forall |i| 0 <= i < children.len() ==> (#[trigger] children[i]).label != prefix,
-    
+
         decreases children.len()
     {
         if children.len() > 0 {
@@ -393,10 +393,10 @@ impl<T> SpecTrieHard<T> {
 
             self.wf_prefix(key.take(depth), i),
             self.view_helper(depth, i).wf(),
-        
+
         ensures
             self.get_helper(key, depth, i) == self.view_helper(depth, i).get(key.skip(depth))
-    
+
         decreases self.nodes.len() - i
     {
         match self.nodes[i] {
@@ -415,7 +415,7 @@ impl<T> SpecTrieHard<T> {
 
                 self.axiom_view_helper(depth, i);
                 Self::lemma_find_children_soundness(key[depth], children);
-                
+
                 if let Some(next) = Self::find_children(key[depth], children) {
                     assert(key.take(depth + 1) == key.take(depth) + seq![key[depth]]);
                     assert(key.skip(depth).drop_first() == key.skip(depth + 1));
@@ -505,7 +505,7 @@ impl<T> SpecTrieHard<T> {
 
         ensures
             self.get_prefix_for_path(path).len() == path.len() - 1,
-        
+
         decreases path.len()
     {
         reveal(SpecTrieHard::<_>::get_prefix_for_path);
@@ -524,7 +524,7 @@ impl<T> SpecTrieHard<T> {
 
         ensures
             self.get_prefix_for_path(path)[i] == self.is_parent_of(path[i], path[i + 1]).unwrap(),
-    
+
         decreases path.len()
     {
         reveal(SpecTrieHard::<_>::get_prefix_for_path);
@@ -546,7 +546,7 @@ impl<T> SpecTrieHard<T> {
 
         ensures
             self.wf_prefix(self.get_prefix_for_path(path), i)
-        
+
         decreases path.len()
     {
         reveal(SpecTrieHard::<_>::get_prefix_for_path);
@@ -630,7 +630,7 @@ impl<T> SpecTrieHard<T> {
                 &&& item.value == self.get_helper(key, depth, i).unwrap()
                 &&& exists |path: Seq<int>| #[trigger] self.is_path(path, i, j)
             },
-        
+
         decreases self.nodes.len() - i
     {
         let value = self.get_helper(key, depth, i).unwrap();
@@ -641,7 +641,7 @@ impl<T> SpecTrieHard<T> {
                 assert(self.is_path(seq![i], i, i));
             }
 
-            SpecTrieState::Search(item, children) => {        
+            SpecTrieState::Search(item, children) => {
                 if key.len() == depth {
                     assert(self.get_item(i).is_some());
                     assert(self.is_path(seq![i], i, i));
@@ -700,7 +700,7 @@ impl<T> SpecTrieHard<T> {
                 0 <= j < self.nodes.len() ==>
                 (exists |path| self.is_path(path, i, j)) ==>
                 (self.get_item(j) matches Some(item) ==> item.key != key),
-        
+
         decreases self.nodes.len() - i
     {
         match self.nodes[i] {
@@ -726,7 +726,7 @@ impl<T> SpecTrieHard<T> {
                         (self.get_item(j) matches Some(item) ==> item.key != key)
                     by {
                         let path = choose |path| self.is_path(path, i, j);
-                        
+
                         if let Some(item) = self.get_item(j) {
                             assert(item.key != key) by {
                                 let root_path_to_j = root_path + path.drop_first();
@@ -752,7 +752,7 @@ impl<T> SpecTrieHard<T> {
                         (self.get_item(j) matches Some(item) ==> item.key != key)
                     by {
                         let path = choose |path| self.is_path(path, i, j);
-                        
+
                         if let Some(item) = self.get_item(j) {
                             if next_opt.is_some() && path[1] == next {
                                 // Apply induction if there is a child with label key[depth]
@@ -838,9 +838,9 @@ impl<T> SpecTrieHard<T> {
 
                     self.lemma_get_prefix_alt(path_i, diff - 1);
                     self.lemma_get_prefix_alt(path_j, diff - 1);
-                    
+
                     assert(path_i_prefix[diff - 1] != path_j_prefix[diff - 1]);
-                
+
                 // Otherwise one is a prefix of another, in which case
                 // the key length should be different
                 } else if diff == path_i.len() {
@@ -899,14 +899,14 @@ impl<T> SpecTrieHard<T> {
                 forall |i| j <= i < self.nodes.len() ==>
                     (#[trigger] self.get_item(i) matches Some(item) ==>
                         item.key != key),
-    
+
         decreases self.nodes.len() - j
     {
         if j < self.nodes.len() {
             self.lemma_get_alt_to_exists_key_helper(key, j + 1);
         }
     }
-    
+
     /// Similar to lemma_get_to_exists_key, but for get_alt
     pub proof fn lemma_get_alt_to_exists_key(self, key: Seq<u8>)
         requires self.wf()
@@ -943,7 +943,7 @@ impl<T> SpecTrieHard<T> {
         requires
             paths.len() == self.nodes.len(),
             forall |i| 0 <= i < paths.len() ==> #[trigger] self.is_path(paths[i], 0, i),
-        
+
         ensures
             self.wf_no_junk(),
     {}
