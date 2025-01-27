@@ -519,51 +519,6 @@ impl SearchNode<Mask> {
         })
     }
 
-    // preserves inequalities over the map filter map sequence
-    proof fn lemma_map_filter_map_inequality(self, s : [Mask; 256])
-        requires
-            forall |i : int, j : int| 0 <= i < j < s.len() ==> s[i] < s[j],
-        ensures
-            ({
-                let s_mfm = s@.map(|i, m| (i as u8, m))
-                            .filter(|m: (u8, Mask)| self.mask & m.1 != 0);
-                forall |i : int, j : int| 0 <= i < j < s_mfm.len()
-                    ==> (#[trigger] s_mfm[i]).0 < (#[trigger] s_mfm[j]).0
-            })
-    {
-        let s_m = s@.map(|i, m| (i as u8, m));
-        let s_mf = s_m.filter(|m: (u8, Mask)| self.mask & m.1 != 0);
-
-        assert forall |i : int, j : int| #![trigger s_mf[i], s_mf[j]] 0 <= i < j < s_mf.len() implies s_mf[i].0 < s_mf[j].0 by {
-            assert (exists |i_ : int, j_ : int| 0 <= i_ < j_ < s_m.len() && s_mf[i] == s_m[i_] && s_mf[j] == s_m[j_])
-                by {utils::lemma_filter_ordering(s_m, |m: (u8, Mask)| self.mask & m.1 != 0, i, j)};
-            }
-    }
-
-    /// Self::view(trie) should generate a sequence of children nodes
-    /// with disjoint labels
-    proof fn lemma_wf_search_view_disjointness<T: View>(self, trie: TrieHardSized<'_, T, Mask>)
-        requires
-            trie.masks.wf(),
-            self.wf(trie),
-
-        ensures ({
-            let children = self.view(trie.masks);
-            forall |i, j|
-                #![trigger children[i], children[j]]
-                0 <= i < children.len() && 0 <= j < children.len() && i < j
-                ==> children[i].label < children[j].label
-        })
-    {
-        let children = self.view(trie.masks);
-
-        assert(forall |i, j|
-            #![trigger children[i], children[j]]
-            0 <= i < j < children.len()
-            ==> children[i].label < children[j].label)
-            by {self.lemma_map_filter_map_inequality(trie.masks.0)};
-    }
-
     /// Any one hot mask should have a have a well-defined log2
     proof fn lemma_one_hot_mask(mask: Mask)
         requires mask.count_ones() == 1
@@ -801,8 +756,8 @@ impl SearchNode<Mask> {
         }
     }
 
-    /// Bascially the spec for evaluate, but factored out since we might need induction
-    proof fn lemma_search_node_lookup<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, c: u8)
+    /// When the mask check succeeds, the returend index should be the index of the child
+    proof fn lemma_search_node_lookup_success<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, c: u8)
         requires
             trie.wf(),
             self.wf(*trie),
@@ -826,8 +781,8 @@ impl SearchNode<Mask> {
         assert(self.chars@.take(self.chars@.len() as int) =~= self.chars@);
     }
 
-    /// Helper for lemma_children_test
-    proof fn lemma_children_test_helper<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, n: int, c: u8)
+    /// Helper for lemma_search_node_lookup_failure
+    proof fn lemma_search_node_lookup_failure_helper<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, n: int, c: u8)
         requires
             trie.wf(),
             self.wf(*trie),
@@ -861,7 +816,7 @@ impl SearchNode<Mask> {
             assert(mask == prev_mask | cur_mask
                 ==> mask & c_mask == 0 ==> prev_mask & c_mask == 0) by (bit_vector);
 
-            self.lemma_children_test_helper(trie, n - 1, c);
+            self.lemma_search_node_lookup_failure_helper(trie, n - 1, c);
 
             if mask_res == 0 {
                 assert(cur_mask == c_mask && cur_mask != 0 ==>
@@ -870,8 +825,8 @@ impl SearchNode<Mask> {
         }
     }
 
-    /// To test if a children label exists, one can just check if the mask exists
-    proof fn lemma_children_test<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, c: u8)
+    /// Failure case (as opposed to lemma_search_node_lookup_success)
+    proof fn lemma_search_node_lookup_failure<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, c: u8)
         requires
             trie.wf(),
             self.wf(*trie),
@@ -885,13 +840,12 @@ impl SearchNode<Mask> {
                 forall |i| 0 <= i < children.len() ==> #[trigger] children[i].label != c
         })
     {
-        self.lemma_children_test_helper(trie, self.chars@.len() as int, c);
+        self.lemma_search_node_lookup_failure_helper(trie, self.chars@.len() as int, c);
         assert(self.chars@.take(self.chars@.len() as int) =~= self.chars@);
     }
 
     // result == Some(i) ==> i is the index into `trie.nodes` of self's child corresponding to c
     // result == None ==> self has no child corresponding to c
-    // #[verifier::external_body]
     fn evaluate<T: View>(&self, c: u8, trie: &TrieHardSized<'_, T, Mask>) -> (res: Option<usize>)
         requires
             trie.wf(),
@@ -904,6 +858,15 @@ impl SearchNode<Mask> {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
 
+        proof {
+            // broadcast use utils::lemma_filter_equiv_pred;
+            let children = self.view(trie.masks);
+            SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
+
+            self.lemma_search_node_lookup_success(trie, c);
+            self.lemma_search_node_lookup_failure(trie, c);
+        }
+
         // Original version:
         // (mask_res > 0).then(|| {
         //     let smaller_bits = mask_res - 1;
@@ -912,29 +875,12 @@ impl SearchNode<Mask> {
         //     self.edge_start + index_offset
         // })
 
-        let ghost children = self.view(trie.masks);
-
-        proof {
-            broadcast use utils::lemma_filter_equiv_pred;
-            SpecTrieHard::<T::V>::lemma_find_children_soundness(c, children);
-        }
-
         if mask_res > 0 {
             let smaller_bits = mask_res - 1;
             let smaller_bits_mask = smaller_bits & self.mask;
             let index_offset = smaller_bits_mask.count_ones() as usize; // assert-by-compute
-
-            proof {
-                self.lemma_wf_search_view_disjointness(*trie);
-                self.lemma_search_node_lookup(trie, c);
-            }
-
             Some(self.edge_start + index_offset)
         } else {
-            proof {
-                self.lemma_children_test(trie, c);
-            }
-
             None
         }
     }
