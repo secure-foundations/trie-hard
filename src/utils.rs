@@ -55,17 +55,35 @@ pub open spec fn u8_count_ones(i: u8) -> u32
     } else {
         u8_count_ones(i / 2)
     }
+}
 
-    // (
-    //     if i & 0b0000_0001u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b0000_0010u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b0000_0100u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b0000_1000u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b0001_0000u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b0010_0000u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b0100_0000u8 != 0 { 1u32 } else { 0u32 } +
-    //     if i & 0b1000_0000u8 != 0 { 1u32 } else { 0u32 }
-    // ) as u32
+pub proof fn lemma_u8_count_ones_bound()
+    ensures forall |i| u8_count_ones(i) <= 8,
+{
+    assert forall |i| true implies u8_count_ones(i) <= 8 by {
+        reveal_with_fuel(u8_count_ones, 9);
+        assert(i / 2 / 2 / 2 / 2 / 2 / 2 / 2 / 2 == 0);
+    }
+}
+
+pub proof fn lemma_u8_count_ones_zero(i: u8)
+    requires i.count_ones() == 0
+    ensures i == 0
+    decreases i
+{
+    lemma_u8_count_ones_bound();
+
+    if i & 1 == 1 {
+        assert(i & 1 == 1 ==> i != 0) by (bit_vector);
+        assert((i / 2).count_ones() <= 8);
+        return;
+    }
+
+    if i != 0 {
+        assert(i.count_ones() == (i / 2).count_ones());
+        lemma_u8_count_ones_zero(i / 2);
+        assert(i & 1 != 1 && i / 2 == 0 ==> i == 0) by (bit_vector);
+    }
 }
 
 #[verifier::external_fn_specification]

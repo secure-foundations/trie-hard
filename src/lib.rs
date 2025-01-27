@@ -607,22 +607,105 @@ impl SearchNode<Mask> {
         }
     }
 
+    /// Any one hot mask should have a have a well-defined log2
+    proof fn lemma_one_hot_mask(mask: Mask)
+        requires mask.count_ones() == 1
+        ensures
+            mask != 0,
+            exists |i: Mask| mask == (1 as Mask) << i,
+
+        decreases mask
+    {
+        utils::lemma_u8_count_ones_bound();
+        if mask != 0 {
+            if mask & 1 == 1 {
+                assert((mask / 2).count_ones() == 0);
+                utils::lemma_u8_count_ones_zero(mask / 2);
+                assert(mask / 2 == 0 && mask & 1 == 1 ==> mask == (1 as Mask) << 0) by (bit_vector);
+            } else {
+                assert(mask.count_ones() == (mask / 2).count_ones());
+                Self::lemma_one_hot_mask(mask / 2);
+
+                let log_mask_minus_1 = choose |i: Mask| (mask / 2) == (1 as Mask) << i;
+
+                assert(
+                    (mask / 2) != 0 &&
+                    (mask / 2) == (1 as Mask) << log_mask_minus_1 &&
+                    mask & 1 != 1
+                    ==>
+                    mask == (1 as Mask) << ((log_mask_minus_1 + 1) as Mask)
+                ) by (bit_vector);
+            }
+        }
+    }
+
+    /// A union of disjoint one-hot masks should have exactly as many 1s as the number of masks
+    proof fn lemma_one_hot_mask_union_count(masks: Seq<Mask>)
+        requires
+            forall |i| 0 <= i < masks.len() ==> #[trigger] masks[i].count_ones() == 1,
+            forall |i, j| 0 <= i < j < masks.len() ==> masks[i] < masks[j],
+
+        ensures masks.fold_left(0, |acc: Mask, item: Mask| acc | item).count_ones() == masks.len(),
+    {
+        admit();
+    }
+
     proof fn lemma_search_node_lookup_bv_helper(mask_union: Mask, mask1: Mask, mask2: Mask)
         requires
             mask1.count_ones() == 1,
+            mask2.count_ones() == 1,
             mask_union & mask1 != 0,
+            mask1 < mask2,
 
         ensures
             ((mask_union & mask1) - 1) as Mask & mask_union
             == (((mask_union | mask2) & mask1) - 1) as Mask & (mask_union | mask2)
     {
-        admit();
+        Self::lemma_one_hot_mask(mask1);
+        Self::lemma_one_hot_mask(mask2);
+        let log_mask1 = choose |i: Mask| mask1 == (1 as Mask) << i;
+        let log_mask2 = choose |i: Mask| mask2 == (1 as Mask) << i;
+
+        assert(
+            mask1 == (1 as Mask) << log_mask1 &&
+            mask2 == (1 as Mask) << log_mask2 &&
+            mask_union & mask1 != 0 &&
+            mask1 < mask2
+            ==>
+            ((mask_union & mask1) - 1) as Mask & mask_union
+            == (((mask_union | mask2) & mask1) - 1) as Mask & (mask_union | mask2)
+        ) by (bit_vector);
+    }
+
+    /// If a sequence of masks are all bounded by a one-hot mask,
+    /// then their union should also be bounded
+    proof fn lemma_bitwise_union_one_hot_bound(masks: Seq<Mask>, log_bound: Mask)
+        requires
+            ((1 as Mask) << log_bound) != 0, // No overflow
+            forall |i| 0 <= i < masks.len() ==> masks[i] < ((1 as Mask) << log_bound)
+        ensures
+            masks.fold_left(0, |acc: Mask, item: Mask| acc | item) < ((1 as Mask) << log_bound)
+        decreases masks.len()
+    {
+        if masks.len() != 0 {
+            let last = masks.last();
+            let mask_union = masks.fold_left(0, |acc: Mask, item: Mask| acc | item);
+            let prev_mask_union = masks.drop_last().fold_left(0, |acc: Mask, item: Mask| acc | item);
+
+            Self::lemma_bitwise_union_one_hot_bound(masks.drop_last(), log_bound);
+            assert(
+                prev_mask_union < ((1 as Mask) << log_bound) &&
+                last < ((1 as Mask) << log_bound)
+                ==> prev_mask_union | last < ((1 as Mask) << log_bound)
+            ) by (bit_vector);
+        }
     }
 
     proof fn lemma_search_node_lookup_bv_helper2(masks: Seq<Mask>)
         requires
             masks.len() > 0,
             forall |i| 0 <= i < masks.len() ==> #[trigger] masks[i].count_ones() == 1,
+            forall |i, j| 0 <= i < j < masks.len() ==> masks[i] < masks[j],
 
         ensures ({
             let last = masks.last();
@@ -636,7 +719,26 @@ impl SearchNode<Mask> {
             index_offset == masks.len() - 1
         })
     {
-        admit();
+        let last = masks.last();
+        let mask_union = masks.fold_left(0, |acc: Mask, item: Mask| acc | item);
+        let mask_union_prev = masks.drop_last().fold_left(0, |acc: Mask, item: Mask| acc | item);
+
+        let log_last = choose |i: Mask| last == (1 as Mask) << i;
+
+        Self::lemma_one_hot_mask(last);
+        Self::lemma_bitwise_union_one_hot_bound(masks.drop_last(), log_last);
+
+        // The copmutation of smaller_bits_mask is equivalent to removing the last mask
+        assert(
+            mask_union_prev < ((1 as Mask) << log_last) &&
+            mask_union == mask_union_prev | ((1 as Mask) << log_last)
+            ==>
+                ((mask_union & ((1 as Mask) << log_last)) - 1) as Mask & mask_union
+                == mask_union_prev
+        ) by (bit_vector);
+
+        // mask_union_prev should have exactly `masks.len() - 1` bits
+        Self::lemma_one_hot_mask_union_count(masks.drop_last());
     }
 
     proof fn lemma_search_node_lookup_helper<T: View>(&self, trie: &TrieHardSized<'_, T, Mask>, n: int, c: u8)
@@ -818,8 +920,6 @@ impl SearchNode<Mask> {
         requires
             trie.wf(),
             self.wf(*trie),
-            // self.mask == trie.masks.0@.fold_left(0 as Mask, |item : Mask, acc| (item + acc) as Mask),
-            // forall |i| 0 <= i < trie.masks.0.len() ==> self.mask & trie.masks.0[i] == #[trigger] trie.masks.0[i],
 
         ensures
             res matches Some(i) ==> SpecTrieHard::<T::V>::find_children(c, self.view(trie.masks)) == Some(i as int),
@@ -827,6 +927,8 @@ impl SearchNode<Mask> {
     {
         let c_mask = trie.masks.0[c as usize];
         let mask_res = self.mask & c_mask;
+
+        // Original version:
         // (mask_res > 0).then(|| {
         //     let smaller_bits = mask_res - 1;
         //     let smaller_bits_mask = smaller_bits & self.mask;
@@ -853,16 +955,6 @@ impl SearchNode<Mask> {
 
             Some(self.edge_start + index_offset)
         } else {
-            // let ghost used_bytes = trie.masks.0@
-            //     .map(|i, m| (i as u8, m))
-            //     .filter(|m: (u8, Mask)|
-            //         trie.masks.0@[m.0 as int] == m.1 && // invariant from map
-            //         self.mask & m.1 != 0);
-
-            // // Since c_mask is also an element of trie.masks
-            // assert(forall |i| #![trigger used_bytes[i]] 0 <= i < used_bytes.len()
-            //     ==> used_bytes[i].1 & c_mask == 0);
-
             proof {
                 self.lemma_children_test(trie, c);
             }
