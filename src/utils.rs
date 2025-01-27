@@ -303,4 +303,18 @@ pub proof fn lemma_modifications_give_correct_offset(masks : Seq<Mask>, mask_sum
     admit()
 }
 
+/// map and fold_left commute
+pub proof fn lemma_map_fold_left_commute<A, B, C>(
+    s: Seq<A>,
+    map_f: spec_fn(A) -> B,
+    fold_init: C,
+    fold_f: spec_fn(C, B) -> C,
+)
+    ensures
+        s.map_values(map_f).fold_left(fold_init, fold_f)
+            == s.fold_left(fold_init, |acc, x| fold_f(acc, map_f(x))),
+{
+    admit();
+}
+
 }
