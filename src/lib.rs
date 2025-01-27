@@ -513,37 +513,10 @@ impl SearchNode<Mask> {
     /// Get the spec children nodes represented by a SearchNode
     closed spec fn view(self, masks: MasksByByteSized<Mask>) -> Seq<SpecChildRef>
     {
-        // masks.0@
-        //     // Find bytes corresponding to the bits set in self.mask
-        //     // in the order specified in trie.masks
-        //     .map(|i, m| (i as u8, m))
-        //     .filter(|m: (u8, Mask)| self.mask & m.1 != 0)
-
-        //     // Map to SpecChildRef's
-        //     .map(|i, m: (u8, Mask)| SpecChildRef {
-        //         label: m.0,
-        //         idx: self.edge_start + i,
-        //     })
-
         self.chars@.map(|i, c| SpecChildRef {
             label: c,
             idx: self.edge_start + i,
         })
-    }
-
-    /// Given mask, find the number of 1s below the first 1 in the mask
-    /// e.g. count_ones_below(0b0011, 0b0010) == 1
-    ///      count_ones_below(0b0011, 0b1100) == 2
-    pub open spec fn count_ones_below(i: Mask, mask: Mask) -> u32
-        decreases i
-    {
-        if i == 0 || mask & 1 == 1 {
-            0
-        } else if i & 1 == 1 {
-            (1 + Self::count_ones_below(i / 2, mask / 2)) as u32
-        } else {
-            Self::count_ones_below(i / 2, mask / 2)
-        }
     }
 
     // preserves inequalities over the map filter map sequence
@@ -591,22 +564,6 @@ impl SearchNode<Mask> {
             by {self.lemma_map_filter_map_inequality(trie.masks.0)};
     }
 
-    /// A recursive definition to find the number of 1s
-    /// equal or below the mask corresponding to a particular character
-    closed spec fn count_masks<T: View>(mask: Mask, trie: TrieHardSized<'_, T, Mask>, c: u8) -> int
-        decreases c
-    {
-        if c == 0 {
-            0
-        } else {
-            if mask & trie.masks.0@[c as int] == 0 {
-                Self::count_masks(mask, trie, (c - 1) as u8)
-            } else {
-                1 + Self::count_masks(mask, trie, (c - 1) as u8)
-            }
-        }
-    }
-
     /// Any one hot mask should have a have a well-defined log2
     proof fn lemma_one_hot_mask(mask: Mask)
         requires mask.count_ones() == 1
@@ -646,8 +603,27 @@ impl SearchNode<Mask> {
             forall |i, j| 0 <= i < j < masks.len() ==> masks[i] < masks[j],
 
         ensures masks.fold_left(0, |acc: Mask, item: Mask| acc | item).count_ones() == masks.len(),
+        decreases masks.len()
     {
-        admit();
+        if masks.len() != 0 {
+            let last = masks.last();
+            Self::lemma_one_hot_mask_union_count(masks.drop_last());
+
+            Self::lemma_one_hot_mask(last);
+            let log_last = choose |i: Mask| last == (1 as Mask) << i;
+
+            Self::lemma_bitwise_union_one_hot_bound(masks.drop_last(), log_last);
+
+            let mask_union = masks.fold_left(0, |acc: Mask, item: Mask| acc | item);
+            let prev_mask_union = masks.drop_last().fold_left(0, |acc: Mask, item: Mask| acc | item);
+
+            assert(mask_union == prev_mask_union | last);
+            assert(prev_mask_union < ((1 as Mask) << log_last));
+            assert(prev_mask_union.count_ones() == masks.len() - 1);
+
+            // Show that adding 1 new bit to a mask union increases count_ones by exactly 1
+            utils::lemma_u8_count_ones_add_bit(prev_mask_union, log_last);
+        }
     }
 
     proof fn lemma_search_node_lookup_bv_helper(mask_union: Mask, mask1: Mask, mask2: Mask)

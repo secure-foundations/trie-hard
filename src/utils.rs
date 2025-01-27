@@ -86,6 +86,66 @@ pub proof fn lemma_u8_count_ones_zero(i: u8)
     }
 }
 
+/// Adding one high bit not included in `i` increases the number of bits by one
+pub proof fn lemma_u8_count_ones_add_bit(i: u8, log: u8)
+    requires
+        (1 as u8) << log != 0, // No overflow
+        i < (1 as u8) << log,
+    ensures
+        (i | ((1 as u8) << log)).count_ones() == i.count_ones() + 1,
+
+    decreases log
+{
+    lemma_u8_count_ones_bound();
+
+    if log != 0 {
+        assert(
+            log != 0 &&
+            (1 as u8) << log != 0 &&
+            i < (1 as u8) << log
+
+            ==>
+            (i | ((1 as u8) << log)) != 0 &&
+            (i | ((1 as u8) << log)) / 2 == ((i / 2) | ((1 as u8) << ((log - 1) as u8))) &&
+
+            // Preconditions of the inductive call
+            (1 as u8) << ((log - 1) as u8) != 0 &&
+            (i / 2) < ((1 as u8) << ((log - 1) as u8)) &&
+
+            // Some facts used later
+            ((i | ((1 as u8) << log)) & 1 == 1 <==> i & 1 == 1)
+        ) by (bit_vector);
+
+        assert(i & 1 == 1 ==> i != 0) by (bit_vector);
+
+        lemma_u8_count_ones_add_bit(i / 2, (log - 1) as u8);
+        assert(
+            ((i / 2) | ((1 as u8) << ((log - 1) as u8))).count_ones()
+            == (i / 2).count_ones() + 1
+        );
+
+        if (i | ((1 as u8) << log)) & 1 == 1 {
+            assert((i | ((1 as u8) << log)).count_ones() == (i / 2).count_ones() + 2);
+            assert(i.count_ones() == (i / 2).count_ones() + 1);
+        } else {
+            assert((i | ((1 as u8) << log)).count_ones() == (i / 2).count_ones() + 1);
+        }
+    } else {
+        assert(
+            log == 0 &&
+            i < (1 as u8) << log
+            ==>
+            (1 as u8) << log == 1 &&
+            i == 0 &&
+            (i | ((1 as u8) << log)) == 1 &&
+            (1 as u8) & 1 == 1
+        ) by (bit_vector);
+
+        assert(i.count_ones() == 0);
+        assert((1 as u8).count_ones() == 1);
+    }
+}
+
 #[verifier::external_fn_specification]
 #[verifier::when_used_as_spec(u8_count_ones)]
 pub fn ex_u8_count_ones(i: u8) -> (r: u32)
